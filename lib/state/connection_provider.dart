@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
+import 'package:mouvi/core/services/vpn_native_service.dart';
 
 enum VpnConnectionStatus { disconnected, connecting, connected }
 
@@ -16,10 +19,21 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
 
   void connect(VpnConfig config) {
     state = VpnConnectionState(status: VpnConnectionStatus.connecting, activeConfig: config);
+    unawaited(
+      ref.read(vpnEngineProvider).connect(config).then((connected) {
+        if (connected) {
+          markConnected();
+        } else {
+          markDisconnected();
+        }
+      }),
+    );
   }
 
   void disconnect() {
-    state = const VpnConnectionState();
+    unawaited(
+      ref.read(vpnEngineProvider).disconnect().then((_) => markDisconnected()),
+    );
   }
 
   void markConnected() {
