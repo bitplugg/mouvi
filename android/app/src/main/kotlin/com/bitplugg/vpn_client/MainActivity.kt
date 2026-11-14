@@ -6,6 +6,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var vpnChannel: MethodChannel? = null
+    private val vpnEngine: MouviVpnEngine by lazy { MouviVpnEngine(this) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -15,9 +16,19 @@ class MainActivity : FlutterActivity() {
         ).also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "connect" -> result.success(true)
-                    "disconnect" -> result.success(true)
-                    "setKillSwitch" -> result.success(true)
+                    "connect" -> {
+                        val configJson = call.argument<String>("config")
+                        val connected = configJson != null && vpnEngine.connect(configJson)
+                        result.success(connected)
+                    }
+
+                    "disconnect" -> result.success(vpnEngine.disconnect())
+
+                    "setKillSwitch" -> {
+                        vpnEngine.setKillSwitch(call.argument<Boolean>("enabled") ?: true)
+                        result.success(true)
+                    }
+
                     else -> result.notImplemented()
                 }
             }
