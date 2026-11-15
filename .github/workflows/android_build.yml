@@ -4,6 +4,15 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Custom release tag (e.g. v1.0.0)'
+        required: false
+        default: ''
+      release_notes:
+        description: 'Custom release notes (optional)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -71,7 +80,7 @@ jobs:
       - name: Build debug APK
         run: flutter build apk --debug
 
-      - name: Upload debug APK (workflow artifact only)
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
@@ -84,6 +93,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for changelog
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -104,6 +115,17 @@ jobs:
 
       - name: Flutter pub get
         run: flutter pub get
+
+      # Read version from pubspec.yaml
+      - name: Extract version from pubspec
+        id: version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/.*version: //' | cut -d' ' -f1)
+          VERSION_CODE=$(echo "$VERSION" | cut -d'+' -f2)
+          VERSION_NAME=$(echo "$VERSION" | cut -d'+' -f1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
 
       # Production signing is optional. If these repository secrets are set,
       # the release APK is signed with the project key:
@@ -135,26 +157,112 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
+      # Generate changelog from commits since last tag
+      - name: Generate changelog
+        id: changelog
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            COMMIT_RANGE="${GITHUB_SHA}^..${GITHUB_SHA}"
+          else
+            COMMIT_RANGE="${LAST_TAG}..${GITHUB_SHA}"
+          fi
+          echo "commit_range=$COMMIT_RANGE" >> $GITHUB_OUTPUT
+
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" $COMMIT_RANGE || true)
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="- No changes since last release"
+          fi
+          # Escape newlines for GitHub Actions output
+          CHANGELOG_ESCAPED=$(echo "$CHANGELOG" | sed 's/%/%25/g; s/\n/%0A/g; s/\r/%0D/g')
+          echo "changelog=$CHANGELOG_ESCAPED" >> $GITHUB_OUTPUT
+
+      # Determine release tag
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="v${{ steps.version.outputs.version_name }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      # Upload release APK
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
 
+      # Publish GitHub Release
       - name: Publish GitHub Release
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v0.0.0-${GITHUB_SHA::7}"
+          TAG="${{ steps.tag.outputs.tag }}"
           APK="build/app/outputs/flutter-apk/app-release.apk"
+          VERSION_NAME="${{ steps.version.outputs.version_name }}"
+          VERSION_CODE="${{ steps.version.outputs.version_code }}"
+          CHANGELOG="${{ steps.changelog.outputs.changelog }}"
+
+          # Build release notes
+          RELEASE_NOTES=$(cat <<EOF
+## Mouvi v${VERSION_NAME} (build ${VERSION_CODE})
+
+### 📦 Установка
+
+Скачайте **app-release.apk** из вложений этого релиза и установите на Android-устройство.
+При первой установке потребуется разрешить **VPN-права** в настройках системы.
+
+### 🔧 Что нового
+
+${CHANGELOG}
+
+### 📱 Поддерживаемые протоколы
+
+| Протокол | Статус |
+|----------|--------|
+| WireGuard | ✅ |
+| AmneziaWG | ✅ |
+| OpenVPN | 📋 Планируется |
+| Trojan / VLESS / Shadowsocks | 📋 Планируется |
+
+### 🛠 Сборка
+
+- Flutter 3.47.7
+- Android SDK API 35
+- Kotlin / JDK 17
+
+### 📄 SHA-256
+
+\`\`\`
+$(sha256sum "$APK" | awk '{print $1}')
+\`\`\`
+
+---
+
+Создано автоматически через GitHub Actions.
+EOF
+          )
+
+          # Write notes to file for debugging
+          echo "$RELEASE_NOTES" > release-notes.md
+
           if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, updating assets and notes..."
             gh release upload "$TAG" "$APK" --clobber
+            gh release edit "$TAG" \
+              --title "Mouvi v${VERSION_NAME}" \
+              --notes-file release-notes.md \
+              --latest
           else
+            echo "Creating new release $TAG..."
             gh release create "$TAG" \
-              --target "$GITHUB_SHA" \
-              --title "Mouvi ${TAG}" \
-              --generate-notes \
+              --target "${GITHUB_SHA}" \
+              --title "Mouvi v${VERSION_NAME}" \
+              --notes-file release-notes.md \
               --latest \
               "$APK"
           fi
