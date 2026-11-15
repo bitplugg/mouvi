@@ -6,61 +6,145 @@
 
 **Mouvi** — кастомный VPN-клиент для Android, собранный на Flutter.
 
-Быстрый, лёгкий и красивый клиент с поддержкой современных VPN-протоколов и Material You 3.
+Быстрый, лёгкий и современный клиент с поддержкой WireGuard и AmneziaWG, разделением туннелирования (split tunneling), защитой DNS и Material You 3 дизайном.
 
 [![Android Build](https://github.com/bitplugg/mouvi/actions/workflows/android_build.yml/badge.svg)](https://github.com/bitplugg/mouvi/actions/workflows/android_build.yml)
 [![Flutter](https://img.shields.io/badge/Flutter-3.47-0255BD?logo=flutter)](https://docs.flutter.dev)
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android)](https://developer.android.com)
+[![Riverpod](https://img.shields.io/badge/Riverpod-3-ff6f00?logo=flutter)](https://riverpod.dev)
+
+---
+
+## 📖 О проекте
+
+Mouvi — это собственный VPN-клиент, разработанный с акцентом на простоту использования, надёжность и расширяемость. Приложение состоит из двух слоёв:
+
+* **Dart (Flutter)** — пользовательский интерфейс, управление состоянием (Riverpod 3), импорт конфигураций, локализация.
+* **Kotlin (Android)** — нативный VPN-движок через `VpnService`, связь с Flutter по `MethodChannel`.
+
+Архитектура нативной части построена вокруг интерфейса `ProtocolEngine`, что позволяет добавлять новые VPN-протоколы (WireGuard, AmneziaWG, OpenVPN, Trojan, VLESS, Shadowsocks и т.д.) без изменения Dart-слоя.
 
 ---
 
 ## ✨ Возможности
 
-### Протоколы
-
-| Протокол | Статус | Движок |
-|----------|--------|--------|
-| **WireGuard** | ✅ Поддерживается | `WireGuardEngine` (`com.wireguard.android:tunnel`) |
-| **AmneziaWG** | ✅ Поддерживается | `AmneziaWgEngine` (`com.zaneschepke:amneziawg-android:2.3.7`) |
-| **OpenVPN** | 📋 Планируется | — |
-| **Trojan** и podobные (VLESS, Shadowsocks и др.) | 📋 Планируется | — |
-
-### Импорт конфигураций
-
-- Файлы **`.ovpn`**
-- **Shadowsocks** JSON
-- **VLESS** конфигурации
-
-### Защитные функции (полный пакет)
-
-- **Kill switch** — при отключении VPN весь трафик блокируется
-- **Split tunneling** — выбор, какие приложения идут через VPN
-- **DNS protection** — защита DNS-запросов
-
-### Дизайн
-
-- **Material You 3** (Expressive) + авто-тема из обоев устройства
-- Кастомная иконка и фирменный стиль
-
-### Интерфейс
-
-- Русский и английский языки (переключатель в настройках)
-
-### Уведомления
-
-- Push-уведомления: включение / отключение / состояние соединения
-
-### Сборка
-
-- Весь процесс сборки — через **GitHub Actions** (workflow)
+| Категория | Возможность | Статус |
+|-----------|-------------|--------|
+| **Протоколы** | WireGuard | ✅ Поддерживается |
+| | AmneziaWG | ✅ Поддерживается |
+| | OpenVPN | 📋 Планируется |
+| | Trojan / VLESS / Shadowsocks | 📋 Планируется |
+| **Импорт конфигураций** | `.ovpn` файлы | 📋 Планируется |
+| | Shadowsocks JSON | 📋 Планируется |
+| | VLESS конфигурации | 📋 Планируется |
+| **Защита и туннелирование** | Kill switch | 📋 Планируется |
+| | Split tunneling (выбор приложений) | ✅ Реализовано на уровне движка |
+| | DNS protection | ✅ Реализовано на уровне движка |
+| **Интерфейс** | Material You 3 (Expressive) | ✅ |
+| | Динамическая тема из обоев | ✅ |
+| | Русский / английский языки | ✅ |
+| **Уведомления** | Состояние соединения (подключён / отключён) | ✅ |
+| **Сборка** | GitHub Actions → APK + Release | ✅ |
 
 ---
 
-## 📸 Баннер
+## 🏗 Архитектура
 
-<p align="center">
-  <img src="docs/banner.svg" alt="Mouvi Banner" width="600">
-</p>
+### Стек технологий
+
+| Слой | Технологии |
+|------|------------|
+| **Frontend** | Flutter 3.47+, Dart 3.13, Material 3 (Expressive) |
+| **State management** | Riverpod 3 |
+| **Платформенный канал** | Flutter `MethodChannel` (`mouvi/vpn`, `mouvi/vpn_events`) |
+| **VPN-движок (Android)** | Нативный Kotlin, интерфейс `ProtocolEngine` |
+| **WireGuard бэкенд** | `com.wireguard.android:tunnel:1.0.20260102` |
+| **AmneziaWG бэкенд** | `com.zaneschepke:amneziawg-android:2.3.7` |
+| **Сборка** | Gradle, GitHub Actions |
+
+### Схема взаимодействия
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Flutter (Dart, Riverpod)                 │
+│  vpn_native_service.dart → MethodChannel('mouvi/vpn')       │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ invokeMethod('connect', {...})
+┌─────────────────────────────────────────────────────────────┐
+│  MainActivity (FlutterActivity)                             │
+│  • MethodChannel handler: connect / disconnect / getState   │
+│  • activeEngine: ProtocolEngine?                            │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ ProtocolEngineFactory.forProtocol(protocol, context)
+┌─────────────────────────────────────────────────────────────┐
+│  ProtocolEngineFactory                                      │
+│  ┌──────────────┐  ┌─────────────────────────────────────┐ │
+│  │ "wireguard"  │─►│ WireGuardEngine (синглтон)          │ │
+│  │ "amneziawg"  │─►│ AmneziaWgEngine (синглтон)          │ │
+│  │ else         │─►│ null → VpnResult.Failure(...)       │ │
+│  └──────────────┘  └─────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              │
+          ┌───────────────────┴───────────────────┐
+          ▼                                       ▼
+┌───────────────────┐                 ┌───────────────────┐
+│ WireGuardEngine   │                 │ AmneziaWgEngine   │
+│ • GoBackend       │                 │ • GoBackend       │
+│ • Tunnel (UP/DOWN)│                 │ • Tunnel (UP/DOWN)│
+│ • injectRuntime   │                 │ • injectRuntime   │
+│   Options (DNS,   │                 │   Options (DNS,   │
+│    ExcludedApps)  │                 │    ExcludedApps)  │
+└───────────────────┘                 └───────────────────┘
+```
+
+### Интерфейс `ProtocolEngine`
+
+Все нативные движки реализуют общий интерфейс `ProtocolEngine`:
+
+```kotlin
+interface ProtocolEngine {
+    fun connect(request: VpnConnectRequest, callback: (VpnResult<String>) -> Unit)
+    fun disconnect(callback: (VpnResult<Unit>) -> Unit)
+    fun getState(): Map<String, Any?>
+    fun currentStateMap(): Map<String, Any?>
+    fun setStateListener(listener: ((Boolean) -> Unit)?)
+}
+```
+
+Контракт с Dart-слоем (`VpnConnectRequest`, `VpnResult`) неизменен — это позволяет добавлять новые протоколы без правки кода на Flutter.
+
+### Доступные движки
+
+| Движок | Файл | Бэкенд | Протокол |
+|--------|------|--------|----------|
+| `WireGuardEngine` | `android/app/src/main/kotlin/com/bitplugg/vpn_client/WireGuardEngine.kt` | `com.wireguard.android.backend.GoBackend` | `wireguard` |
+| `AmneziaWgEngine` | `android/app/src/main/kotlin/com/bitplugg/vpn_client/AmneziaWgEngine.kt` | `org.amnezia.awg.backend.GoBackend` | `amneziawg` |
+
+### Процессный синглтон
+
+Оба движка — процессные синглтоны. Это критически важно, потому что нативный `GoBackend` хранит туннель в памяти и сравнивает объекты `Tunnel` по ссылке. После пересоздания Activity новый экземпляр движка не смог бы распознать уже поднятый туннель. Синглтон гарантирует, что состояние туннеля сохраняется корректно.
+
+### Как добавить новый протокол
+
+1. Создать класс, реализующий `ProtocolEngine` (например, `VlessEngine`).
+2. Добавить одну строку в `ProtocolEngineFactory.forProtocol()`:
+   ```kotlin
+   "vless" -> VlessEngine.get(context)
+   ```
+3. Dart-слой (`vpn_native_service.dart`, `connection_provider.dart`) не требует изменений — контракт MethodChannel неизменен.
+
+### MethodChannel контракт
+
+| Метод | Аргументы | Ответ |
+|-------|-----------|-------|
+| `connect` | `id`, `name`, `protocol`, `content`, `excludedApplications`, `dnsProtection` | `success(tunnelName)` или `error(code, message, null)` |
+| `disconnect` | — | `success(null)` или `error(code, message, null)` |
+| `getState` | — | `Map{status, tunnelName, alwaysOn, lockdown}` |
+| `openVpnSettings` | — | `success(null)` |
+
+Коды ошибок: `unsupported_protocol`, `invalid_config`, `tunnel_start_failed`, `vpn_permission_denied`, `busy`, `native_unavailable`.
 
 ---
 
@@ -68,109 +152,131 @@
 
 ### Требования
 
-- Flutter 3.47+
-- Android SDK (API 35+)
-- Kotlin
+* **Flutter** 3.47+
+* **Dart** 3.13+
+* **Android SDK** (compileSdk 35+, minSdk 24)
+* **Kotlin** 1.9+
+* **JDK** 17+
 
-### Сборка
-
-#### Через GitHub Actions (рекомендуется)
-
-Пуш в ветку `main` автоматически запускает workflow [`Android Build`](.github/workflows/android_build.yml), который:
-
-1. Устанавливает Flutter
-2. Настраивает Android SDK
-3. Выполняет `flutter pub get`
-4. Запускает `flutter analyze`
-5. Собирает **debug APK**
-6. Загружает артефакт и создаёт **GitHub Release** со сгенерированными release notes
-
-#### Локальная сборка
+### Установка зависимостей
 
 ```bash
 flutter pub get
-flutter analyze
-flutter build apk --debug
 ```
 
-### Установка на Android
+### Локальная сборка
 
-1. Установите APK
-2. Разрешите **VPN-права** в системе (терминальное приложение или экран VPN)
-3. Импортируйте конфигурацию (.ovpn / JSON / VLESS)
-4. Подключитесь
+```bash
+# Проверка кода
+flutter analyze
+
+# Сборка debug APK
+flutter build apk --debug
+
+# Установка на подключённое устройство
+flutter install
+```
+
+### Сборка через GitHub Actions
+
+Пуш в ветку `main` автоматически запускает workflow [`Android Build`](.github/workflows/android_build.yml), который:
+
+1. Устанавливает Flutter и Android SDK
+2. Выполняет `flutter pub get`
+3. Запускает `flutter analyze`
+4. Собирает **debug APK**
+5. Загружает артефакт и создаёт **GitHub Release**
+
+### Подписьリリース APK
+
+Для сборки подписанногоリリース APK создайте файл `android/key.properties`:
+
+```properties
+storeFile=/путь/к/keystore.jks
+storePassword=your_store_password
+keyAlias=your_key_alias
+keyPassword=your_key_password
+```
+
+Файл `android/key.properties` не коммитится в репозиторий (добавлен в `.gitignore`).
 
 ---
 
-## 🏗 Архитектура
-
-### Стек
-
-| Слой | Технологии |
-|------|------------|
-| **Frontend** | Flutter + Material 3 (Expressive), динамическая тема |
-| **State management** | Riverpod 3 |
-| **Платформенный канал** | Flutter MethodChannel (`mouvi/vpn`, `mouvi/vpn_events`) |
-| **VPN-движок (Android)** | Нативный Kotlin, абстракция `ProtocolEngine` |
-
-### VPN-движок (нативная часть, Android)
-
-Движок вынесен за интерфейс `ProtocolEngine`, чтобы легко добавлять новые протоколы без изменения Dart-слоя.
+## 📁 Структура проекта
 
 ```
-MainActivity (MethodChannel «mouvi/vpn»)
-    │
-    ├── connect(request) ──► ProtocolEngineFactory.forProtocol(protocol)
-    │                          │
-    │              ┌───────────┴───────────┐
-    │              ▼                       ▼
-    │         "wireguard"               "amneziawg"
-    │              │                       │
-    │              ▼                       ▼
-    │        WireGuardEngine            AmneziaWgEngine
-    │        (com.wireguard.android)    (com.zaneschepke:amneziawg-android)
-    │              │                       │
-    │              ▼                       ▼
-    │        GoBackend.setState(UP)     GoBackend.setState(UP)
+mouvi/
+├── android/
+│   ├── app/
+│   │   ├── build.gradle.kts          # Зависимости: wireguard, amneziawg
+│   │   └── src/main/kotlin/com/bitplugg/vpn_client/
+│   │       ├── MainActivity.kt       # FlutterActivity, MethodChannel хендлеры
+│   │       ├── ProtocolEngine.kt     # Интерфейс движка
+│   │       ├── ProtocolEngineFactory.kt  # Фабрика движков по протоколу
+│   │       ├── WireGuardEngine.kt    # WireGuard реализация
+│   │       ├── AmneziaWgEngine.kt    # AmneziaWG реализация
+│   │       ├── MouviVpnEngine.kt     # VpnConnectRequest, VpnResult (контракт)
+│   │       ├── MouviNotifications.kt # Системные уведомления
+│   │       └── MouviSecureStorage.kt # Шифрованное хранилище конфигов
+│   └── ...
+├── lib/
+│   ├── core/
+│   │   ├── services/
+│   │   │   └── vpn_native_service.dart   # MethodChannel обёртка
+│   │   ├── models/
+│   │   │   └── vpn_config.dart           # VpnConfig, VpnProtocolType
+│   │   └── utils/
+│   │       └── config_parser.dart        # Парсинг конфигов
+│   ├── state/
+│   │   └── connection_provider.dart      # Riverpod провайдер соединения
+│   └── ...
+├── test/
+│   └── config_parser_test.dart
+├── docs/
+│   └── banner.svg
+├── pubspec.yaml
+├── analysis_options.yaml
+├── README.md
+└── .gitignore
 ```
-
-#### Классы
-
-| Класс | Файл | Описание |
-|-------|------|----------|
-| `ProtocolEngine` | `android/app/src/main/kotlin/com/bitplugg/vpn_client/ProtocolEngine.kt` | Интерфейс движка: `connect`, `disconnect`, `getState`, `currentStateMap`, `setStateListener` |
-| `WireGuardEngine` | `…/WireGuardEngine.kt` | Реализация для WireGuard через `com.wireguard.android.backend.GoBackend` |
-| `AmneziaWgEngine` | `…/AmneziaWgEngine.kt` | Реализация для AmneziaWG через `org.amnezia.awg.backend.GoBackend` |
-| `ProtocolEngineFactory` | `…/ProtocolEngineFactory.kt` | Фабрика: возвращает движок по имени протокола или `null` |
-| `VpnConnectRequest` / `VpnResult` | `…/MouviVpnEngine.kt` | Контракт данных с Dart-слоем (MethodChannel) |
-
-#### Процессный синглтон
-
-Оба движка (`WireGuardEngine`, `AmneziaWgEngine`) — процессные синглтоны. Это важно, потому что нативный `GoBackend` хранит туннель в памяти и сравнивает объекты `Tunnel` по ссылке. После пересоздания Activity новый экземпляр движка не смог бы распознать уже поднятый туннель.
-
-#### Как добавить новый протокол
-
-1. Создать класс, реализующий `ProtocolEngine`.
-2. Добавить одну строку в `ProtocolEngineFactory.forProtocol()`:
-   ```kotlin
-   "vless" -> VlessEngine.get(context)
-   ```
-3. Dart-слой (`vpn_native_service.dart`) не требует изменений — контракт MethodChannel неизменен.
 
 ---
 
 ## 🗺 Roadmap
 
-- [ ] Split tunneling UI
-- [ ] DNS protection UI
+- [ ] Split tunneling UI (выбор приложений в интерфейсе)
+- [ ] DNS protection UI (настройка DNS в приложении)
 - [ ] Push-уведомления (FCM)
-- [ ] Dark/Light авто-тема из обоев
+- [ ] Dark/Light авто-тема из обоев устройства
 - [ ] OpenVPN-движок
 - [ ] Trojan / VLESS / Shadowsocks движки
-- [ ] Web / iOS
+- [ ] Поддержка iOS
+- [ ] Поддержка Web
+
+---
+
+## 🤝 Вклад в проект
+
+1. Сделайте форк репозитория
+2. Создайте ветку для вашей функции (`git checkout -b feature/amazing-feature`)
+3. Внесите изменения и закоммитьте их (`git commit -m 'feat: add amazing feature'`)
+4. Запушьте в ветку (`git push origin feature/amazing-feature`)
+5. Откройте Pull Request
+
+Перед отправкой PR убедитесь, что:
+* `flutter analyze` не выдаёт ошибок
+* `flutter build apk --debug` проходит успешно
+* Код следует стилю проекта (kotlin + dart linter)
 
 ---
 
 ## 📄 License
 
 Пока без лицензии. Все права защищены.
+
+---
+
+## 📞 Контакты
+
+* **GitHub**: https://github.com/bitplugg/mouvi
+* **Автор**: bitplugg
