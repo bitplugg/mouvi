@@ -52,10 +52,6 @@ class WireGuardEngine private constructor(context: Context) : ProtocolEngine {
         executor.execute {
             val result = try {
                 when {
-                    hasAmneziaAttributes(request.content) -> VpnResult.Failure(
-                        "unsupported_protocol",
-                        "AmneziaWG parameters are not supported by the WireGuard engine",
-                    )
                     else -> {
                         val runtimeConfig = injectRuntimeOptions(request)
                         val config = Config.parse(

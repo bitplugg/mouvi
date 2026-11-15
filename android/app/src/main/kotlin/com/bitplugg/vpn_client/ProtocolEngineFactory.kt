@@ -12,7 +12,8 @@ import android.content.Context
 object ProtocolEngineFactory {
     fun forProtocol(protocol: String, context: Context): ProtocolEngine? = when (protocol) {
         "wireguard" -> WireGuardEngine.get(context)
-        // amneziawg, vless, trojan, shadowsocks, openvpn — пока не реализованы
+        "amneziawg" -> AmneziaWgEngine.get(context)
+        // vless, trojan, shadowsocks, openvpn — пока не реализованы
         else -> null
     }
 }

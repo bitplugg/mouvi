@@ -62,6 +62,7 @@ android {
 
 dependencies {
     implementation("com.wireguard.android:tunnel:1.0.20260102")
+    implementation("com.zaneschepke:amneziawg-android:2.3.7")
 }
 
 kotlin {
