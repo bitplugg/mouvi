@@ -20,7 +20,6 @@ class MouviVpnEngine(private val context: Context) {
     private var tunnel: Tunnel? = null
     private var tunnelName: String = DEFAULT_TUNNEL_NAME
 
-    @Volatile
     fun connect(configJson: String): Boolean = try {
         val name = tunnelName.ifBlank { "mouvi-${UUID.randomUUID().toString().substring(0, 8)}" }
         val newTunnel = object : Tunnel {
