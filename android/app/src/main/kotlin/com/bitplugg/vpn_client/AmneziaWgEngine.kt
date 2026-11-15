@@ -29,7 +29,7 @@ class AmneziaWgEngine private constructor(context: Context) : ProtocolEngine {
     @Volatile
     private var stateListener: ((Boolean) -> Unit)? = null
 
-    fun setStateListener(listener: ((Boolean) -> Unit)?) {
+    override fun setStateListener(listener: ((Boolean) -> Unit)?) {
         stateListener = listener
     }
 
