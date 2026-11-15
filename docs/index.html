@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mouvi — VPN-клиент для Android</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+        h1 { font-size: 2.5rem; margin-bottom: 10px; }
+        h2 { font-size: 1.5rem; margin-top: 30px; margin-bottom: 15px; color: #667eea; }
+        p { line-height: 1.6; margin-bottom: 20px; }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-right: 8px;
+            margin-bottom: 8px;
+            color: white;
+        }
+        .badge-green { background: #28a745; }
+        .badge-yellow { background: #ffc107; color: #333; }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            margin-right: 12px;
+            margin-bottom: 12px;
+        }
+        .btn:hover { background: #5568d3; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            color: rgba(255,255,255,0.7);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🦅 Mouvi</h1>
+            <p>Кастомный VPN-клиент для Android на Flutter</p>
+            <a href="https://github.com/bitplugg/mouvi/releases/latest" class="btn">📥 Скачать APK</a>
+            <a href="https://github.com/bitplugg/mouvi" class="btn">★ GitHub</a>
+        </header>
+
+        <div class="card">
+            <h2>✨ Поддерживаемые протоколы</h2>
+            <table>
+                <tr><th>Протокол</th><th>Статус</th></tr>
+                <tr><td>WireGuard</td><td><span class="badge badge-green">✅ Поддерживается</span></td></tr>
+                <tr><td>AmneziaWG</td><td><span class="badge badge-green">✅ Поддерживается</span></td></tr>
+                <tr><td>OpenVPN</td><td><span class="badge badge-yellow">📋 Планируется</span></td></tr>
+                <tr><td>Trojan / VLESS / Shadowsocks</td><td><span class="badge badge-yellow">📋 Планируется</span></td></tr>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>🚀 Быстрый старт</h2>
+            <ol>
+                <li>Скачайте APK из <a href="https://github.com/bitplugg/mouvi/releases/latest">GitHub Releases</a></li>
+                <li>Установите APK на Android-устройство</li>
+                <li>Разрешите VPN-права в настройках системы</li>
+                <li>Импортируйте конфигурацию (.ovpn, Shadowsocks JSON, VLESS)</li>
+                <li>Подключитесь</li>
+            </ol>
+        </div>
+
+        <div class="card">
+            <h2>🏗 Архитектура</h2>
+            <p>Муви использует нативный Android VPN-движок с интерфейсом <code>ProtocolEngine</code>, что позволяет добавлять новые протоколы без изменения Dart-слоя:</p>
+            <ul>
+                <li><strong>WireGuardEngine</strong> — через <code>com.wireguard.android.backend.GoBackend</code></li>
+                <li><strong>AmneziaWgEngine</strong> — через <code>org.amnezia.awg.backend.GoBackend</code></li>
+                <li><strong>ProtocolEngineFactory</strong> — выбор движка по имени протокола</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>📚 Документация</h2>
+            <ul>
+                <li><a href="architecture.html">Архитектура VPN-движка</a></li>
+                <li><a href="adding-protocol.html">Как добавить новый протокол</a></li>
+                <li><a href="building.html">Сборка проекта</a></li>
+                <li><a href="https://github.com/bitplugg/mouvi/blob/main/README.md">README на GitHub</a></li>
+            </ul>
+        </div>
+
+        <footer>
+            <p>Сделано с ❤️ <strong>bitplugg</strong></p>
+            <p><a href="https://github.com/bitplugg/mouvi" style="color: white; text-decoration: underline;">github.com/bitplugg/mouvi</a></p>
+        </footer>
+    </div>
+</body>
+</html>
