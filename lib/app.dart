@@ -1,5 +1,6 @@
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/state/locale_provider.dart';
@@ -19,6 +20,7 @@ Widget mouviMaterialApp({
     title: 'Mouvi',
     locale: locale,
     supportedLocales: AppLocalizations.supportedLocales,
+    localizationsDelegates: GlobalMaterialLocalizations.delegates,
     theme: lightTheme(lightScheme),
     darkTheme: darkTheme(darkScheme),
     themeMode: themeMode,
