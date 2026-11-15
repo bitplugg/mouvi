@@ -171,7 +171,7 @@ jobs:
             COMMIT_RANGE="${LAST_TAG}..${GITHUB_SHA}"
           fi
           echo "commit_range=$COMMIT_RANGE" >> $GITHUB_OUTPUT
-          CHANGELOG=$(git log --pretty=format:"- %s (%h)" $COMMIT_RANGE || true)
+          CHANGELOG=$(git log --pretty=format:"- %s" $COMMIT_RANGE || true)
           if [ -z "$CHANGELOG" ]; then
             CHANGELOG="- No changes since last release"
           fi
