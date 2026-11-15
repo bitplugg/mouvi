@@ -37,7 +37,7 @@ class MainActivity : FlutterActivity() {
     private var pushChannel: MethodChannel? = null
     private var eventsChannel: EventChannel? = null
 
-    private var vpnEngine: MouviVpnEngine? = null
+    private var activeEngine: ProtocolEngine? = null
     private lateinit var notifications: MouviNotifications
 
     private var pendingConnect: PendingConnect? = null
@@ -51,7 +51,6 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
-        vpnEngine = MouviVpnEngine.get(applicationContext)
         notifications = MouviNotifications(applicationContext)
 
         vpnChannel = MethodChannel(messenger, "mouvi/vpn").also { channel ->
@@ -60,9 +59,9 @@ class MainActivity : FlutterActivity() {
                     "connect" -> handleConnect(call, result)
                     "disconnect" -> handleDisconnect(result)
                     "getState" -> {
-                        val engine = requireEngine()
+                        val engine = activeEngine
                         ioExecutor.execute {
-                            val snapshot = engine.getState()
+                            val snapshot = engine?.getState() ?: defaultStateMap()
                             runOnUiThread { result.success(snapshot) }
                         }
                     }
@@ -82,17 +81,15 @@ class MainActivity : FlutterActivity() {
                     "write" -> {
                         val data = call.argument<String>("data")
                         if (data == null) {
-                            result.error("invalid_config", "Missing data", null)
+                            result.error("invalid_data", "Data is null", null)
                         } else {
-                            ioExecutor.execute {
-                                val saved = MouviSecureStorage.write(applicationContext, data)
-                                runOnUiThread { result.success(saved) }
-                            }
+                            val ok = MouviSecureStorage.write(applicationContext, data)
+                            runOnUiThread { result.success(ok) }
                         }
                     }
                     "clear" -> ioExecutor.execute {
-                        val cleared = MouviSecureStorage.clear(applicationContext)
-                        runOnUiThread { result.success(cleared) }
+                        val ok = MouviSecureStorage.clear(applicationContext)
+                        runOnUiThread { result.success(ok) }
                     }
                     else -> result.notImplemented()
                 }
@@ -102,19 +99,9 @@ class MainActivity : FlutterActivity() {
         appsChannel = MethodChannel(messenger, "mouvi/apps").also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "listApps" -> ioExecutor.execute {
-                        val apps = try {
-                            loadInstalledApps()
-                        } catch (_: Throwable) {
-                            null
-                        }
-                        runOnUiThread {
-                            if (apps == null) {
-                                result.error("apps_unavailable", "Could not read apps", null)
-                            } else {
-                                result.success(apps)
-                            }
-                        }
+                    "list" -> ioExecutor.execute {
+                        val apps = loadInstalledApps()
+                        runOnUiThread { result.success(apps) }
                     }
                     else -> result.notImplemented()
                 }
@@ -124,21 +111,11 @@ class MainActivity : FlutterActivity() {
         pushChannel = MethodChannel(messenger, "mouvi/push").also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "isEnabled" -> result.success(notifications.isEnabled())
-                    "setEnabled" -> {
-                        notifications.setEnabled(call.argument<Boolean>("enabled") ?: true)
-                        result.success(null)
-                    }
                     "requestPermission" -> requestNotificationPermission(result)
-                    "notify" -> {
-                        notifications.notifyConnection(
-                            call.argument<String>("type") ?: "disconnected",
-                            call.argument<String>("serverName"),
-                            call.argument<String>("protocol"),
-                            call.argument<String>("title"),
-                            call.argument<String>("text"),
-                        )
-                        result.success(null)
+                    "setEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        notifications.setEnabled(enabled)
+                        runOnUiThread { result.success(true) }
                     }
                     else -> result.notImplemented()
                 }
@@ -148,27 +125,32 @@ class MainActivity : FlutterActivity() {
         eventsChannel = EventChannel(messenger, "mouvi/vpn_events").also { channel ->
             channel.setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    val engine = requireEngine()
-                    engine.setStateListener {
+                    val engine = activeEngine
+                    engine?.setStateListener {
                         runOnUiThread { events?.success(engine.currentStateMap()) }
                     }
                     // Начальный снимок читаем вне UI-потока: GoBackend.getState
                     // может ждать привязки VpnService.
                     ioExecutor.execute {
-                        val snapshot = engine.currentStateMap()
+                        val snapshot = engine?.currentStateMap() ?: defaultStateMap()
                         runOnUiThread { events?.success(snapshot) }
                     }
                 }
 
                 override fun onCancel(arguments: Any?) {
-                    vpnEngine?.setStateListener(null)
+                    activeEngine?.setStateListener(null)
                 }
             })
         }
     }
 
-    private fun requireEngine(): MouviVpnEngine {
-        return vpnEngine ?: MouviVpnEngine.get(applicationContext).also { vpnEngine = it }
+    private fun defaultStateMap(): Map<String, Any?> {
+        return mapOf(
+            "status" to "down",
+            "tunnelName" to WireGuardEngine.TUNNEL_NAME,
+            "alwaysOn" to false,
+            "lockdown" to false,
+        )
     }
 
     private fun handleConnect(call: MethodCall, result: MethodChannel.Result) {
@@ -178,12 +160,16 @@ class MainActivity : FlutterActivity() {
         }
         val content = call.argument<String>("content")
         val protocol = call.argument<String>("protocol") ?: ""
-        if (content.isNullOrBlank()) {
-            result.error("invalid_config", "Empty configuration", null)
+
+        // Выбор движка через фабрику: неподдерживаемые протоколы отвергаются здесь.
+        val engine = ProtocolEngineFactory.forProtocol(protocol, applicationContext)
+        if (engine == null) {
+            result.error("unsupported_protocol", "Protocol $protocol is not supported", null)
             return
         }
-        if (protocol != "wireguard") {
-            result.error("unsupported_protocol", "Protocol $protocol is not supported", null)
+
+        if (content.isNullOrBlank()) {
+            result.error("invalid_config", "Empty configuration", null)
             return
         }
         val request = VpnConnectRequest(
@@ -202,12 +188,14 @@ class MainActivity : FlutterActivity() {
             result.error("vpn_permission_denied", error.message ?: "VpnService.prepare failed", null)
             return
         }
+        activeEngine = engine
         if (prepareIntent != null) {
             pendingConnect = PendingConnect(request, result)
             try {
                 startActivityForResult(prepareIntent, REQUEST_VPN_PERMISSION)
             } catch (error: Throwable) {
                 pendingConnect = null
+                activeEngine = null
                 result.error("vpn_permission_denied", error.message ?: "Could not request VPN permission", null)
             }
         } else {
@@ -216,7 +204,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startConnect(request: VpnConnectRequest, result: MethodChannel.Result) {
-        requireEngine().connect(request) { outcome ->
+        activeEngine?.connect(request) { outcome ->
             when (outcome) {
                 is VpnResult.Success -> result.success(outcome.value)
                 is VpnResult.Failure -> result.error(outcome.code, outcome.message, null)
@@ -225,12 +213,13 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleDisconnect(result: MethodChannel.Result) {
-        requireEngine().disconnect { outcome ->
+        activeEngine?.disconnect { outcome ->
             when (outcome) {
                 is VpnResult.Success -> result.success(null)
                 is VpnResult.Failure -> result.error(outcome.code, outcome.message, null)
             }
         }
+        activeEngine = null
     }
 
     private fun openVpnSettings(result: MethodChannel.Result) {
@@ -269,33 +258,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun loadInstalledApps(): List<Map<String, String>> {
-        val manager = packageManager
-        val intent = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
-        @Suppress("DEPRECATION")
-        val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            manager.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
-        } else {
-            manager.queryIntentActivities(intent, 0)
-        }
-        val seen = HashSet<String>()
-        val apps = ArrayList<Map<String, String>>()
-        for (info in resolved) {
-            val packageName = info.activityInfo?.packageName ?: continue
-            if (packageName == this.packageName || !seen.add(packageName)) {
-                continue
-            }
-            val label = try {
-                info.loadLabel(manager).toString()
-            } catch (_: Throwable) {
-                packageName
-            }
-            apps.add(mapOf("package" to packageName, "label" to label))
-        }
-        apps.sortBy { it["label"]?.lowercase() ?: "" }
-        return apps
-    }
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_VPN_PERMISSION) {
@@ -328,12 +290,40 @@ class MainActivity : FlutterActivity() {
         result?.success(granted)
     }
 
+
+    private fun loadInstalledApps(): List<Map<String, String>> {
+        val manager = packageManager
+        val intent = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+        @Suppress("DEPRECATION")
+        val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            manager.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
+        } else {
+            manager.queryIntentActivities(intent, 0)
+        }
+        val seen = HashSet<String>()
+        val apps = ArrayList<Map<String, String>>()
+        for (info in resolved) {
+            val packageName = info.activityInfo?.packageName ?: continue
+            if (packageName == this.packageName || !seen.add(packageName)) {
+                continue
+            }
+            val label = try {
+                info.loadLabel(manager).toString()
+            } catch (_: Throwable) {
+                packageName
+            }
+            apps.add(mapOf("package" to packageName, "label" to label))
+        }
+        apps.sortBy { it["label"]?.lowercase() ?: "" }
+        return apps
+    }
+
     override fun onDestroy() {
         pendingConnect?.result?.error("native_unavailable", "Activity destroyed before connect", null)
         pendingConnect = null
         pendingNotificationPermission?.success(false)
         pendingNotificationPermission = null
-        vpnEngine?.setStateListener(null)
+        activeEngine?.setStateListener(null)
         vpnChannel?.setMethodCallHandler(null)
         storageChannel?.setMethodCallHandler(null)
         appsChannel?.setMethodCallHandler(null)
