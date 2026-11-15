@@ -24,19 +24,24 @@ class _MainShellState extends ConsumerState<MainShell> {
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
-        children: const [
-          HomeScreen(),
-          ServersScreen(),
-          SettingsScreen(),
-        ],
+        children: const [HomeScreen(), ServersScreen(), SettingsScreen()],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) => setState(() => _currentIndex = index),
         destinations: [
-          NavigationDestination(icon: Icon(Icons.home), label: localizations.t('home')),
-          NavigationDestination(icon: Icon(Icons.shield), label: localizations.t('servers')),
-          NavigationDestination(icon: Icon(Icons.settings), label: localizations.t('settings')),
+          NavigationDestination(
+            icon: Icon(Icons.home),
+            label: localizations.t('home'),
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.shield),
+            label: localizations.t('servers'),
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings),
+            label: localizations.t('settings'),
+          ),
         ],
       ),
     );

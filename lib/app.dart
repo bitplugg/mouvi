@@ -14,8 +14,14 @@ Widget mouviMaterialApp({
   required Locale locale,
   required ThemeMode themeMode,
 }) {
-  final ColorScheme lightScheme = ColorScheme.fromSeed(seedColor: lightSeed, brightness: Brightness.light);
-  final ColorScheme darkScheme = ColorScheme.fromSeed(seedColor: darkSeed, brightness: Brightness.dark);
+  final ColorScheme lightScheme = ColorScheme.fromSeed(
+    seedColor: lightSeed,
+    brightness: Brightness.light,
+  );
+  final ColorScheme darkScheme = ColorScheme.fromSeed(
+    seedColor: darkSeed,
+    brightness: Brightness.dark,
+  );
   return MaterialApp(
     title: 'Mouvi',
     locale: locale,
