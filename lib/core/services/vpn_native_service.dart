@@ -11,7 +11,7 @@ import 'package:mouvi/core/models/vpn_config.dart';
 abstract class VpnEngine {
   /// Подключиться к серверу. Возвращает `true`, если соединение
   /// было успешно установлено на нативной стороне.
-  Future<bool> connect(VpnConfig config);
+  Future<bool> connect(VpnConfig config, {bool? killSwitch, bool? splitTunneling, bool? dnsProtection});
 
   /// Отключиться от текущего VPN-соединения.
   Future<bool> disconnect();
@@ -28,11 +28,14 @@ class MethodChannelVpnEngine extends VpnEngine {
   final MethodChannel _channel;
 
   @override
-  Future<bool> connect(VpnConfig config) async {
+  Future<bool> connect(VpnConfig config, {bool? killSwitch, bool? splitTunneling, bool? dnsProtection}) async {
     final result = await _channel.invokeMethod<bool>('connect', <String, dynamic>{
       'protocol': config.protocol.name,
       'name': config.name,
       'content': config.content,
+      'killSwitch': killSwitch ?? true,
+      'splitTunneling': splitTunneling ?? false,
+      'dnsProtection': dnsProtection ?? true,
     });
     return result ?? false;
   }

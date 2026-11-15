@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
+import 'package:mouvi/core/services/push_notification_service.dart';
 import 'package:mouvi/core/services/vpn_native_service.dart';
+import 'package:mouvi/state/vpn_settings_provider.dart';
 
 enum VpnConnectionStatus { disconnected, connecting, connected }
 
@@ -25,7 +27,12 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
   void connect(VpnConfig config) {
     state = VpnConnectionState(status: VpnConnectionStatus.connecting, activeConfig: config);
     unawaited(
-      ref.read(vpnEngineProvider).connect(config).then((connected) {
+      ref.read(vpnEngineProvider).connect(
+            config,
+            killSwitch: ref.read(vpnSettingsProvider).killSwitchEnabled,
+            splitTunneling: ref.read(vpnSettingsProvider).splitTunnelingEnabled,
+            dnsProtection: ref.read(vpnSettingsProvider).dnsProtectionEnabled,
+          ).then((connected) {
         if (connected) {
           markConnected();
         } else {
@@ -47,10 +54,24 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       activeConfig: state.activeConfig,
       connectedAt: DateTime.now(),
     );
+    _notifyPush('connected');
   }
 
   void markDisconnected() {
+    _notifyPush('disconnected');
     state = const VpnConnectionState();
+  }
+
+  void _notifyPush(String type) {
+    final enabled = ref.read(pushNotificationsEnabledProvider);
+    if (!enabled) {
+      return;
+    }
+    unawaited(
+      ref
+          .read(pushNotificationServiceProvider)
+          .notify(type, serverName: state.activeConfig?.name, protocol: state.activeConfig?.protocol.name),
+    );
   }
 }
 
