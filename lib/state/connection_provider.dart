@@ -7,10 +7,15 @@ import 'package:mouvi/core/services/vpn_native_service.dart';
 enum VpnConnectionStatus { disconnected, connecting, connected }
 
 class VpnConnectionState {
-  const VpnConnectionState({this.status = VpnConnectionStatus.disconnected, this.activeConfig});
+  const VpnConnectionState({
+    this.status = VpnConnectionStatus.disconnected,
+    this.activeConfig,
+    this.connectedAt,
+  });
 
   final VpnConnectionStatus status;
   final VpnConfig? activeConfig;
+  final DateTime? connectedAt;
 }
 
 class ConnectionNotifier extends Notifier<VpnConnectionState> {
@@ -37,7 +42,11 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
   }
 
   void markConnected() {
-    state = VpnConnectionState(status: VpnConnectionStatus.connected, activeConfig: state.activeConfig);
+    state = VpnConnectionState(
+      status: VpnConnectionStatus.connected,
+      activeConfig: state.activeConfig,
+      connectedAt: DateTime.now(),
+    );
   }
 
   void markDisconnected() {

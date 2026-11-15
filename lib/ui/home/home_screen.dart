@@ -17,6 +17,16 @@ String protocolLabelKey(VpnProtocolType protocol) {
   };
 }
 
+String formatUptime(DateTime start) {
+  final duration = DateTime.now().difference(start);
+  final hours = duration.inHours;
+  final minutes = duration.inMinutes % 60;
+  if (hours > 0) {
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}';
+  }
+  return duration.inMinutes.toString();
+}
+
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -53,6 +63,13 @@ class HomeScreen extends ConsumerWidget {
                     localizations.t(protocolLabelKey(connection.activeConfig!.protocol)),
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
+                  if (connection.connectedAt != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '${localizations.t('uptime')} ${formatUptime(connection.connectedAt!)}',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
                 ],
                 if (connection.status == VpnConnectionStatus.disconnected && savedConfigs.isEmpty) ...[
                   const SizedBox(height: 16),
