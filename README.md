@@ -17,32 +17,41 @@
 ## ✨ Возможности
 
 ### Протоколы
-- **WireGuard**
-- **AmneziaWG** (экспериментальные/производные конфигурации Amnezia)
-- **OpenVPN**
-- **Trojan** и подобные (VLESS, Shadowsocks и др.)
+
+| Протокол | Статус | Движок |
+|----------|--------|--------|
+| **WireGuard** | ✅ Поддерживается | `WireGuardEngine` (`com.wireguard.android:tunnel`) |
+| **AmneziaWG** | ✅ Поддерживается | `AmneziaWgEngine` (`com.zaneschepke:amneziawg-android:2.3.7`) |
+| **OpenVPN** | 📋 Планируется | — |
+| **Trojan** и podobные (VLESS, Shadowsocks и др.) | 📋 Планируется | — |
 
 ### Импорт конфигураций
+
 - Файлы **`.ovpn`**
 - **Shadowsocks** JSON
 - **VLESS** конфигурации
 
 ### Защитные функции (полный пакет)
+
 - **Kill switch** — при отключении VPN весь трафик блокируется
 - **Split tunneling** — выбор, какие приложения идут через VPN
 - **DNS protection** — защита DNS-запросов
 
 ### Дизайн
+
 - **Material You 3** (Expressive) + авто-тема из обоев устройства
 - Кастомная иконка и фирменный стиль
 
 ### Интерфейс
+
 - Русский и английский языки (переключатель в настройках)
 
 ### Уведомления
+
 - Push-уведомления: включение / отключение / состояние соединения
 
 ### Сборка
+
 - Весь процесс сборки — через **GitHub Actions** (workflow)
 
 ---
@@ -58,6 +67,7 @@
 ## 🚀 Быстрый старт
 
 ### Требования
+
 - Flutter 3.47+
 - Android SDK (API 35+)
 - Kotlin
@@ -94,21 +104,69 @@ flutter build apk --debug
 
 ## 🏗 Архитектура
 
-- **Frontend**: Flutter + Material 3 (Expressive), динамическая тема
-- **State**: Riverpod 3
-- **VPN engine**: нативный (BoringWrapper / WireGuard / AmneziaWG / OpenVPN / Trojan / Shadowsocks / VLESS) через MethodChannel
-- **Сборка**: GitHub Actions → APK + Release
+### Стек
+
+| Слой | Технологии |
+|------|------------|
+| **Frontend** | Flutter + Material 3 (Expressive), динамическая тема |
+| **State management** | Riverpod 3 |
+| **Платформенный канал** | Flutter MethodChannel (`mouvi/vpn`, `mouvi/vpn_events`) |
+| **VPN-движок (Android)** | Нативный Kotlin, абстракция `ProtocolEngine` |
+
+### VPN-движок (нативная часть, Android)
+
+Движок вынесен за интерфейс `ProtocolEngine`, чтобы легко добавлять новые протоколы без изменения Dart-слоя.
+
+```
+MainActivity (MethodChannel «mouvi/vpn»)
+    │
+    ├── connect(request) ──► ProtocolEngineFactory.forProtocol(protocol)
+    │                          │
+    │              ┌───────────┴───────────┐
+    │              ▼                       ▼
+    │         "wireguard"               "amneziawg"
+    │              │                       │
+    │              ▼                       ▼
+    │        WireGuardEngine            AmneziaWgEngine
+    │        (com.wireguard.android)    (com.zaneschepke:amneziawg-android)
+    │              │                       │
+    │              ▼                       ▼
+    │        GoBackend.setState(UP)     GoBackend.setState(UP)
+```
+
+#### Классы
+
+| Класс | Файл | Описание |
+|-------|------|----------|
+| `ProtocolEngine` | `android/app/src/main/kotlin/com/bitplugg/vpn_client/ProtocolEngine.kt` | Интерфейс движка: `connect`, `disconnect`, `getState`, `currentStateMap`, `setStateListener` |
+| `WireGuardEngine` | `…/WireGuardEngine.kt` | Реализация для WireGuard через `com.wireguard.android.backend.GoBackend` |
+| `AmneziaWgEngine` | `…/AmneziaWgEngine.kt` | Реализация для AmneziaWG через `org.amnezia.awg.backend.GoBackend` |
+| `ProtocolEngineFactory` | `…/ProtocolEngineFactory.kt` | Фабрика: возвращает движок по имени протокола или `null` |
+| `VpnConnectRequest` / `VpnResult` | `…/MouviVpnEngine.kt` | Контракт данных с Dart-слоем (MethodChannel) |
+
+#### Процессный синглтон
+
+Оба движка (`WireGuardEngine`, `AmneziaWgEngine`) — процессные синглтоны. Это важно, потому что нативный `GoBackend` хранит туннель в памяти и сравнивает объекты `Tunnel` по ссылке. После пересоздания Activity новый экземпляр движка не смог бы распознать уже поднятый туннель.
+
+#### Как добавить новый протокол
+
+1. Создать класс, реализующий `ProtocolEngine`.
+2. Добавить одну строку в `ProtocolEngineFactory.forProtocol()`:
+   ```kotlin
+   "vless" -> VlessEngine.get(context)
+   ```
+3. Dart-слой (`vpn_native_service.dart`) не требует изменений — контракт MethodChannel неизменен.
 
 ---
 
 ## 🗺 Roadmap
 
-- [ ] Полноценный нативный VPN-движок (BoringWrapper и форки)
 - [ ] Split tunneling UI
 - [ ] DNS protection UI
 - [ ] Push-уведомления (FCM)
 - [ ] Dark/Light авто-тема из обоев
-- [ ] Более форматы конфигураций
+- [ ] OpenVPN-движок
+- [ ] Trojan / VLESS / Shadowsocks движки
 - [ ] Web / iOS
 
 ---
