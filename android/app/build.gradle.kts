@@ -36,10 +36,6 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
-    buildFeatures {
-        // The WireGuard Android library uses Java 8 APIs; enable core library desugaring.
-        coreLibraryDesugaringEnabled = true
-    }
 }
 
 dependencies {
