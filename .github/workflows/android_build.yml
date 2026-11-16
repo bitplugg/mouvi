@@ -175,8 +175,7 @@ jobs:
           if [ -z "$CHANGELOG" ]; then
             CHANGELOG="- No changes since last release"
           fi
-          CHANGELOG_ESCAPED=$(printf '%s' "$CHANGELOG" | sed 's/%/%25/g; s/\n/%0A/g; s/\r/%0D/g')
-          echo "changelog=$CHANGELOG_ESCAPED" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" > changelog.txt
 
       - name: Determine release tag
         id: tag
@@ -203,7 +202,7 @@ jobs:
           APK="build/app/outputs/flutter-apk/app-release.apk"
           VERSION_NAME="${{ steps.version.outputs.version_name }}"
           VERSION_CODE="${{ steps.version.outputs.version_code }}"
-          CHANGELOG="${{ steps.changelog.outputs.changelog }}"
+          CHANGELOG=$(cat changelog.txt)
           SHA256=$(sha256sum "$APK" | awk '{print $1}')
 
           {
