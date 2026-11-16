@@ -87,9 +87,10 @@
             <table>
                 <tr><th>Протокол</th><th>Статус</th></tr>
                 <tr><td>WireGuard</td><td><span class="badge badge-green">✅ Поддерживается</span></td></tr>
-                <tr><td>AmneziaWG</td><td><span class="badge badge-green">✅ Поддерживается</span></td></tr>
-                <tr><td>OpenVPN</td><td><span class="badge badge-yellow">📋 Планируется</span></td></tr>
-                <tr><td>Trojan / VLESS / Shadowsocks</td><td><span class="badge badge-yellow">📋 Планируется</span></td></tr>
+                <tr><td>AmneziaWG</td><td><span class="badge badge-green">✅ Поддерживается (нужны H1–H4)</span></td></tr>
+                <tr><td>WARP (Cloudflare)</td><td><span class="badge badge-green">✅ Как WireGuard</span></td></tr>
+                <tr><td>OpenVPN</td><td><span class="badge badge-yellow">📋 Импорт есть, подключение планируется</span></td></tr>
+                <tr><td>Trojan / VLESS / Shadowsocks</td><td><span class="badge badge-yellow">📋 Импорт есть, подключение планируется</span></td></tr>
             </table>
         </div>
 
@@ -99,14 +100,14 @@
                 <li>Скачайте APK из <a href="https://github.com/bitplugg/mouvi/releases/latest">GitHub Releases</a></li>
                 <li>Установите APK на Android-устройство</li>
                 <li>Разрешите VPN-права в настройках системы</li>
-                <li>Импортируйте конфигурацию (.ovpn, Shadowsocks JSON, VLESS)</li>
-                <li>Подключитесь</li>
+                <li>Импортируйте WireGuard/AmneziaWG/WARP-конфигурацию и подключитесь</li>
+                <li>OpenVPN, Shadowsocks, VLESS и Trojan пока импортируются без подключения</li>
             </ol>
         </div>
 
         <div class="card">
             <h2>🏗 Архитектура</h2>
-            <p>Муви использует нативный Android VPN-движок с интерфейсом <code>ProtocolEngine</code>, что позволяет добавлять новые протоколы без изменения Dart-слоя:</p>
+            <p>Муви использует нативный Android VPN-движок с интерфейсом <code>ProtocolEngine</code>. Новый протокол добавляется отдельным движком и флагом поддержки в Dart-слое:</p>
             <ul>
                 <li><strong>WireGuardEngine</strong> — через <code>com.wireguard.android.backend.GoBackend</code></li>
                 <li><strong>AmneziaWgEngine</strong> — через <code>org.amnezia.awg.backend.GoBackend</code></li>

@@ -35,9 +35,11 @@ extension VpnProtocolTypeX on VpnProtocolType {
 
   /// Поддерживается ли протокол установленным VPN-движком.
   ///
-  /// Сейчас нативный движок — WireGuard (userspace GoBackend).
-  /// AmneziaWG требует отдельного форка движка и пока не поддерживается.
-  bool get engineSupported => this == VpnProtocolType.wireguard;
+  /// WireGuard и AmneziaWG обслуживаются разными нативными бэкендами
+  /// (`org.wireguard` и `org.amnezia.awg`), остальные протоколы пока
+  /// только импортируются.
+  bool get engineSupported =>
+      this == VpnProtocolType.wireguard || this == VpnProtocolType.amneziawg;
 
   /// Идентификатор протокола для нативного канала.
   String get channelName => name;

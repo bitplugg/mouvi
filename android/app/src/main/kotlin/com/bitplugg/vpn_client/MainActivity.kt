@@ -58,12 +58,9 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "connect" -> handleConnect(call, result)
                     "disconnect" -> handleDisconnect(result)
-                    "getState" -> {
-                        val engine = activeEngine
-                        ioExecutor.execute {
-                            val snapshot = engine?.getState() ?: defaultStateMap()
-                            runOnUiThread { result.success(snapshot) }
-                        }
+                    "getState" -> ioExecutor.execute {
+                        val snapshot = currentSnapshot()
+                        runOnUiThread { result.success(snapshot) }
                     }
                     "openVpnSettings" -> openVpnSettings(result)
                     else -> result.notImplemented()
@@ -99,9 +96,19 @@ class MainActivity : FlutterActivity() {
         appsChannel = MethodChannel(messenger, "mouvi/apps").also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "list" -> ioExecutor.execute {
-                        val apps = loadInstalledApps()
-                        runOnUiThread { result.success(apps) }
+                    "listApps" -> ioExecutor.execute {
+                        val apps = try {
+                            loadInstalledApps()
+                        } catch (_: Throwable) {
+                            null
+                        }
+                        runOnUiThread {
+                            if (apps == null) {
+                                result.error("apps_unavailable", "Could not read apps", null)
+                            } else {
+                                result.success(apps)
+                            }
+                        }
                     }
                     else -> result.notImplemented()
                 }
@@ -111,11 +118,22 @@ class MainActivity : FlutterActivity() {
         pushChannel = MethodChannel(messenger, "mouvi/push").also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "isEnabled" -> result.success(notifications.isEnabled())
                     "requestPermission" -> requestNotificationPermission(result)
                     "setEnabled" -> {
                         val enabled = call.argument<Boolean>("enabled") ?: false
                         notifications.setEnabled(enabled)
                         runOnUiThread { result.success(true) }
+                    }
+                    "notify" -> {
+                        notifications.notifyConnection(
+                            type = call.argument<String>("type") ?: "",
+                            serverName = call.argument<String>("serverName"),
+                            protocol = call.argument<String>("protocol"),
+                            titleOverride = call.argument<String>("title"),
+                            textOverride = call.argument<String>("text"),
+                        )
+                        result.success(null)
                     }
                     else -> result.notImplemented()
                 }
@@ -125,20 +143,26 @@ class MainActivity : FlutterActivity() {
         eventsChannel = EventChannel(messenger, "mouvi/vpn_events").also { channel ->
             channel.setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    val engine = activeEngine
-                    engine?.setStateListener {
-                        runOnUiThread { events?.success(engine.currentStateMap()) }
+                    // Слушаем оба движка: после пересоздания Activity заранее
+                    // неизвестно, какой протокол сейчас подключён.
+                    allEngines().forEach { engine ->
+                        engine.setStateListener {
+                            ioExecutor.execute {
+                                val snapshot = currentSnapshot()
+                                runOnUiThread { events?.success(snapshot) }
+                            }
+                        }
                     }
                     // Начальный снимок читаем вне UI-потока: GoBackend.getState
                     // может ждать привязки VpnService.
                     ioExecutor.execute {
-                        val snapshot = engine?.currentStateMap() ?: defaultStateMap()
+                        val snapshot = currentSnapshot()
                         runOnUiThread { events?.success(snapshot) }
                     }
                 }
 
                 override fun onCancel(arguments: Any?) {
-                    activeEngine?.setStateListener(null)
+                    allEngines().forEach { it.setStateListener(null) }
                 }
             })
         }
@@ -151,6 +175,48 @@ class MainActivity : FlutterActivity() {
             "alwaysOn" to false,
             "lockdown" to false,
         )
+    }
+
+    private fun allEngines(): List<ProtocolEngine> = listOf(
+        WireGuardEngine.get(applicationContext),
+        AmneziaWgEngine.get(applicationContext),
+    )
+
+    /**
+     * Реальное состояние любого движка.
+     *
+     * После пересоздания Activity `activeEngine` пуст, поэтому состояние
+     * нельзя хранить только в поле Activity — иначе UI покажет «отключено»
+     * при работающем туннеле и не сможет его закрыть.
+     */
+    private fun currentSnapshot(): Map<String, Any?> {
+        for (engine in allEngines()) {
+            val snapshot = engine.getState()
+            if (snapshot["status"] == "up") {
+                return snapshot
+            }
+        }
+        return defaultStateMap()
+    }
+
+    /** Опускает оба движка: активным может быть любой из них. */
+    private fun disconnectAllEngines(onComplete: (VpnResult.Failure?) -> Unit) {
+        val engines = allEngines()
+        var firstFailure: VpnResult.Failure? = null
+
+        fun step(index: Int) {
+            if (index >= engines.size) {
+                onComplete(firstFailure)
+                return
+            }
+            engines[index].disconnect { outcome ->
+                if (outcome is VpnResult.Failure && firstFailure == null) {
+                    firstFailure = outcome
+                }
+                step(index + 1)
+            }
+        }
+        step(0)
     }
 
     private fun handleConnect(call: MethodCall, result: MethodChannel.Result) {
@@ -204,22 +270,33 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startConnect(request: VpnConnectRequest, result: MethodChannel.Result) {
-        activeEngine?.connect(request) { outcome ->
-            when (outcome) {
-                is VpnResult.Success -> result.success(outcome.value)
-                is VpnResult.Failure -> result.error(outcome.code, outcome.message, null)
+        val engine = activeEngine
+        if (engine == null) {
+            result.error("unsupported_protocol", "No VPN engine selected", null)
+            return
+        }
+        // Android разрешает только один активный VPN. Если туннель уже
+        // поднят (например, после пересоздания Activity), сначала опускаем
+        // его, иначе новый движок не сможет занять VpnService.
+        disconnectAllEngines {
+            engine.connect(request) { outcome ->
+                when (outcome) {
+                    is VpnResult.Success -> result.success(outcome.value)
+                    is VpnResult.Failure -> result.error(outcome.code, outcome.message, null)
+                }
             }
         }
     }
 
     private fun handleDisconnect(result: MethodChannel.Result) {
-        activeEngine?.disconnect { outcome ->
-            when (outcome) {
-                is VpnResult.Success -> result.success(null)
-                is VpnResult.Failure -> result.error(outcome.code, outcome.message, null)
+        disconnectAllEngines { failure ->
+            activeEngine = null
+            if (failure == null) {
+                result.success(null)
+            } else {
+                result.error(failure.code, failure.message, null)
             }
         }
-        activeEngine = null
     }
 
     private fun openVpnSettings(result: MethodChannel.Result) {
@@ -323,7 +400,7 @@ class MainActivity : FlutterActivity() {
         pendingConnect = null
         pendingNotificationPermission?.success(false)
         pendingNotificationPermission = null
-        activeEngine?.setStateListener(null)
+        allEngines().forEach { it.setStateListener(null) }
         vpnChannel?.setMethodCallHandler(null)
         storageChannel?.setMethodCallHandler(null)
         appsChannel?.setMethodCallHandler(null)

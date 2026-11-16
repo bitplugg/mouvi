@@ -51,17 +51,13 @@ class WireGuardEngine private constructor(context: Context) : ProtocolEngine {
     override fun connect(request: VpnConnectRequest, callback: (VpnResult<String>) -> Unit) {
         executor.execute {
             val result = try {
-                when {
-                    else -> {
-                        val runtimeConfig = injectRuntimeOptions(request)
-                        val config = Config.parse(
-                            ByteArrayInputStream(runtimeConfig.toByteArray(Charsets.UTF_8)),
-                        )
-                        when (val state = requireBackend().setState(tunnel, Tunnel.State.UP, config)) {
-                            Tunnel.State.UP -> VpnResult.Success(TUNNEL_NAME)
-                            else -> VpnResult.Failure("tunnel_start_failed", "Tunnel state: $state")
-                        }
-                    }
+                val runtimeConfig = injectRuntimeOptions(request)
+                val config = Config.parse(
+                    ByteArrayInputStream(runtimeConfig.toByteArray(Charsets.UTF_8)),
+                )
+                when (val state = requireBackend().setState(tunnel, Tunnel.State.UP, config)) {
+                    Tunnel.State.UP -> VpnResult.Success(TUNNEL_NAME)
+                    else -> VpnResult.Failure("tunnel_start_failed", "Tunnel state: $state")
                 }
             } catch (error: BackendException) {
                 mapBackendError(error)
@@ -209,40 +205,61 @@ class WireGuardEngine private constructor(context: Context) : ProtocolEngine {
                 additions.add(excludedLine)
             }
         }
-        if (additions.isNotEmpty()) {
-            lines.addAll(interfaceEnd, additions)
-        }
-        return lines.joinToString("\n")
-    }
-
-    private fun hasAmneziaAttributes(content: String): Boolean {
-        var inInterface = false
-        for (rawLine in content.lines()) {
-            val line = rawLine.trim()
+        // WARP-конфиги Cloudflare иногда не содержат Endpoint/AllowedIPs.
+        // Подставляем стандартные значения, иначе туннель не поднимется.
+        // Обычные WireGuard-конфиги не трогаем.
+        var peerEnd = lines.size
+        var warpPeer = false
+        var peerHasEndpoint = false
+        var peerHasAllowedIps = false
+        var inPeer = false
+        for (index in interfaceEnd until lines.size) {
+            val line = lines[index].trim()
             if (line.startsWith("[") && line.endsWith("]")) {
-                inInterface = line.equals("[Interface]", ignoreCase = true)
+                if (inPeer) {
+                    peerEnd = index
+                    break
+                }
+                inPeer = line.equals("[Peer]", ignoreCase = true)
                 continue
             }
-            if (!inInterface || !line.contains('=')) {
+            if (!inPeer || !line.contains('=')) {
                 continue
             }
             val key = line.substringBefore('=').trim().lowercase()
-            if (key in AMNEZIA_KEYS) {
-                return true
+            val value = line.substringAfter('=').trim()
+            when (key) {
+                "publickey" -> if (value == WARP_PUBLIC_KEY) warpPeer = true
+                "endpoint" -> if (value.isNotEmpty()) peerHasEndpoint = true
+                "allowedips" -> if (value.isNotEmpty()) peerHasAllowedIps = true
             }
         }
-        return false
+        val peerAdditions = mutableListOf<String>()
+        if (warpPeer) {
+            if (!peerHasEndpoint) {
+                peerAdditions.add("Endpoint = engage.cloudflareclient.com:2408")
+            }
+            if (!peerHasAllowedIps) {
+                peerAdditions.add("AllowedIPs = 0.0.0.0/0, ::/0")
+            }
+        }
+        if (additions.isNotEmpty()) {
+            lines.addAll(interfaceEnd, additions)
+        }
+        if (peerAdditions.isNotEmpty()) {
+            // Interface-вставки сдвигают индекс конца Peer-секции.
+            lines.addAll(peerEnd + additions.size, peerAdditions)
+        }
+        return lines.joinToString("\n")
     }
 
     companion object {
         const val TUNNEL_NAME = "mouvi"
 
-        private val PACKAGE_PATTERN = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
+        private const val WARP_PUBLIC_KEY =
+            "bmXOC+F1FxEMF9dyiK2H5/56nH5M2nH0e3hv0Xw2FzY="
 
-        private val AMNEZIA_KEYS = setOf(
-            "jc", "jmin", "jmax", "s1", "s2", "s3", "s4",
-            "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3",
-        )
+        private val PACKAGE_PATTERN = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
 
         @Volatile
         private var instance: WireGuardEngine? = null

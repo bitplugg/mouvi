@@ -6,6 +6,8 @@ import 'package:mouvi/core/utils/config_parser.dart';
 
 String _key44() => List<String>.filled(44, 'A').join();
 
+const String _warpPublicKey = 'bmXOC+F1FxEMF9dyiK2H5/56nH5M2nH0e3hv0Xw2FzY=';
+
 String _wireGuardConfig({String? extraInterface}) {
   final key = _key44();
   return '''
@@ -125,15 +127,44 @@ PublicKey = $key
       );
     });
 
-    test('imports AmneziaWG but marks it unsupported', () {
+    test('imports AmneziaWG as a supported protocol', () {
       final config = _wireGuardConfig(
-        extraInterface: 'Jc = 4\nJmin = 10\nJmax = 50\nS1 = 0\nS2 = 0\nH1 = 1',
+        extraInterface:
+            'Jc = 4\nJmin = 10\nJmax = 50\nS1 = 0\nS2 = 0\n'
+            'H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4',
       );
       final result = validateConfig(config);
       expect(result.isValid, isTrue);
       expect(result.protocol, VpnProtocolType.amneziawg);
-      expect(result.engineSupported, isFalse);
-      expect(result.warnings, contains('protocolNotSupportedHint'));
+      expect(result.engineSupported, isTrue);
+      expect(result.warnings, isEmpty);
+    });
+
+    test('rejects AmneziaWG without H1–H4 headers', () {
+      final config = _wireGuardConfig(
+        extraInterface: 'Jc = 4\nJmin = 10\nJmax = 50\nS1 = 0\nS2 = 0\nH1 = 1',
+      );
+      final result = validateConfig(config);
+      expect(result.isValid, isFalse);
+      expect(result.errors, contains('invalidAmneziaHeader'));
+    });
+
+    test('accepts WARP without Endpoint/AllowedIPs', () {
+      final config =
+          '''
+[Interface]
+PrivateKey = ${_key44()}
+Address = 172.16.0.2/32
+[Peer]
+PublicKey = $_warpPublicKey
+''';
+      final result = validateConfig(config);
+      expect(result.isValid, isTrue);
+      expect(result.engineSupported, isTrue);
+      expect(
+        result.warnings,
+        containsAll(<String>['warpEndpointDefault', 'warpAllowedIpsDefault']),
+      );
     });
 
     test('rejects unknown config', () {
@@ -258,10 +289,13 @@ Endpoint = [2001:db8::1]:51820
       expect(config.toString(), isNot(contains('supersecret')));
     });
 
-    test('engine support is limited to WireGuard', () {
+    test('engine support covers WireGuard and AmneziaWG', () {
       expect(VpnProtocolType.wireguard.engineSupported, isTrue);
+      expect(VpnProtocolType.amneziawg.engineSupported, isTrue);
       for (final protocol in VpnProtocolType.values.where(
-        (item) => item != VpnProtocolType.wireguard,
+        (item) =>
+            item != VpnProtocolType.wireguard &&
+            item != VpnProtocolType.amneziawg,
       )) {
         expect(protocol.engineSupported, isFalse, reason: protocol.name);
       }

@@ -385,8 +385,14 @@ class ServersScreen extends ConsumerWidget {
         : (validation.engineSupported
               ? 'configAdded'
               : 'configImportedUnsupported');
+    final details = validation.engineSupported
+        ? validation.warnings.toSet().map(localizations.t).join('\n')
+        : '';
+    final message = details.isEmpty
+        ? localizations.t(messageKey)
+        : '${localizations.t(messageKey)}\n$details';
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(localizations.t(messageKey))));
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _showImportError(

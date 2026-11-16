@@ -5,7 +5,7 @@ title: Архитектура VPN-движка
 
 # Архитектура VPN-движка
 
-Mouvi использует нативный Android VPN-движок, вынесенный за интерфейс `ProtocolEngine`. Это позволяет добавлять новые протоколы без изменения Dart-слоя.
+Mouvi использует нативный Android VPN-движок, вынесенный за интерфейс `ProtocolEngine`. Новый протокол добавляется отдельным движком и флагом поддержки в Dart-слое (`engineSupported`).
 
 ## Схема взаимодействия
 
@@ -46,4 +46,4 @@ MainActivity (FlutterActivity)
    ```kotlin
    "vless" -> VlessEngine.get(context)
    ```
-3. Dart-слой не требует изменений.
+3. Включить протокол в `VpnProtocolType.engineSupported`, добавить подпись/тесты и проверить импорт конфигурации на стороне Dart.

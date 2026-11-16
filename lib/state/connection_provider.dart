@@ -5,6 +5,7 @@ import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
 import 'package:mouvi/core/services/push_notification_service.dart';
 import 'package:mouvi/core/services/vpn_native_service.dart';
+import 'package:mouvi/core/utils/config_parser.dart';
 import 'package:mouvi/state/locale_provider.dart';
 import 'package:mouvi/state/saved_configs_provider.dart';
 import 'package:mouvi/state/vpn_settings_provider.dart';
@@ -204,6 +205,16 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         status: VpnConnectionStatus.error,
         activeConfig: config,
         errorCode: VpnEngineException.unsupportedProtocol,
+      );
+      return;
+    }
+    // Конфиг мог быть сохранён до ужесточения проверок или изменён вручную.
+    // Не отдаём заведомо нерабочий конфиг нативному движку.
+    if (!validateConfig(config.content).isValid) {
+      state = VpnConnectionState(
+        status: VpnConnectionStatus.error,
+        activeConfig: config,
+        errorCode: VpnEngineException.invalidConfig,
       );
       return;
     }

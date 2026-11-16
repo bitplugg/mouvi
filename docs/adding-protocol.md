@@ -45,11 +45,15 @@ fun forProtocol(protocol: String, context: Context): ProtocolEngine? = when (pro
 }
 ```
 
-## Шаг 3: Проверить сборку
+## Шаг 3: Включить протокол в Dart-слое
+
+В `lib/core/models/vpn_config.dart` добавить протокол в `VpnProtocolType.engineSupported`, проверить подпись (`labelKey`), импорт конфигурации и тесты. Контракт `MethodChannel` при этом не меняется.
+
+## Шаг 4: Проверить сборку
 
 ```bash
+dart format lib test
 flutter analyze
+flutter test
 flutter build apk --debug
 ```
-
-Dart-слой (`vpn_native_service.dart`, `connection_provider.dart`) не требует изменений — контракт `MethodChannel` неизменен.

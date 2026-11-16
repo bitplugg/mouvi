@@ -6,7 +6,7 @@
 
 **Mouvi** — кастомный VPN-клиент для Android, собранный на Flutter.
 
-Быстрый, лёгкий и современный клиент с поддержкой WireGuard и AmneziaWG, разделением туннелирования (split tunneling), защитой DNS и Material You 3 дизайном.
+Быстрый, лёгкий и современный клиент с поддержкой WireGuard, AmneziaWG и Cloudflare WARP, разделением туннелирования (split tunneling), защитой DNS и Material You 3 дизайном.
 
 [![Android Build](https://github.com/bitplugg/mouvi/actions/workflows/android_build.yml/badge.svg)](https://github.com/bitplugg/mouvi/actions/workflows/android_build.yml)
 [![Flutter](https://img.shields.io/badge/Flutter-3.47-0255BD?logo=flutter)](https://docs.flutter.dev)
@@ -22,7 +22,7 @@ Mouvi — это собственный VPN-клиент, разработанн
 * **Dart (Flutter)** — пользовательский интерфейс, управление состоянием (Riverpod 3), импорт конфигураций, локализация.
 * **Kotlin (Android)** — нативный VPN-движок через `VpnService`, связь с Flutter по `MethodChannel`.
 
-Архитектура нативной части построена вокруг интерфейса `ProtocolEngine`, что позволяет добавлять новые VPN-протоколы (WireGuard, AmneziaWG, OpenVPN, Trojan, VLESS, Shadowsocks и т.д.) без изменения Dart-слоя.
+Архитектура нативной части построена вокруг интерфейса `ProtocolEngine`: новый VPN-протокол (WireGuard, AmneziaWG, OpenVPN, Trojan, VLESS, Shadowsocks и т.д.) добавляется отдельным движком и флагом поддержки в Dart-слое.
 
 ---
 
@@ -31,15 +31,16 @@ Mouvi — это собственный VPN-клиент, разработанн
 | Категория | Возможность | Статус |
 |-----------|-------------|--------|
 | **Протоколы** | WireGuard | ✅ Поддерживается |
-| | AmneziaWG | ✅ Поддерживается |
-| | OpenVPN | 📋 Планируется |
-| | Trojan / VLESS / Shadowsocks | 📋 Планируется |
-| **Импорт конфигураций** | `.ovpn` файлы | 📋 Планируется |
-| | Shadowsocks JSON | 📋 Планируется |
-| | VLESS конфигурации | 📋 Планируется |
-| **Защита и туннелирование** | Kill switch | 📋 Планируется |
-| | Split tunneling (выбор приложений) | ✅ Реализовано на уровне движка |
-| | DNS protection | ✅ Реализовано на уровне движка |
+| | AmneziaWG | ✅ Поддерживается (нужны H1–H4) |
+| | WARP (Cloudflare) | ✅ Поддерживается как WireGuard |
+| | OpenVPN | 📋 Подключение планируется |
+| | Trojan / VLESS / Shadowsocks | 📋 Подключение планируется |
+| **Импорт конфигураций** | `.ovpn` файлы | ✅ Импорт и проверка |
+| | Shadowsocks JSON | ✅ Импорт и проверка |
+| | VLESS / Trojan конфигурации | ✅ Импорт и проверка |
+| **Защита и туннелирование** | Kill switch | ⛔ Только системный Always-on VPN |
+| | Split tunneling (выбор приложений) | ✅ UI + движок |
+| | DNS protection | ✅ UI + движок |
 | **Интерфейс** | Material You 3 (Expressive) | ✅ |
 | | Динамическая тема из обоев | ✅ |
 | | Русский / английский языки | ✅ |
@@ -244,10 +245,8 @@ mouvi/
 
 ## 🗺 Roadmap
 
-- [ ] Split tunneling UI (выбор приложений в интерфейсе)
-- [ ] DNS protection UI (настройка DNS в приложении)
-- [ ] Push-уведомления (FCM)
-- [ ] Dark/Light авто-тема из обоев устройства
+Реализовано: split tunneling с выбором приложений, защита DNS, динамическая тема Material You, локальные уведомления о состоянии соединения.
+
 - [ ] OpenVPN-движок
 - [ ] Trojan / VLESS / Shadowsocks движки
 - [ ] Поддержка iOS

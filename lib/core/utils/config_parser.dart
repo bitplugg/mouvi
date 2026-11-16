@@ -2,6 +2,12 @@ import 'dart:convert';
 
 import 'package:mouvi/core/models/vpn_config.dart';
 
+/// Публичный ключ Cloudflare WARP.
+///
+/// WARP-конфиги иногда распространяются без `Endpoint`/`AllowedIPs`:
+/// при подключении движок подставляет стандартные значения Cloudflare.
+const String _warpPublicKey = 'bmXOC+F1FxEMF9dyiK2H5/56nH5M2nH0e3hv0Xw2FzY=';
+
 /// Ключи, которые добавляет AmneziaWG в секцию `[Interface]`.
 ///
 /// Формат файла совместим с WireGuard, но стандартный WireGuard-движок
@@ -232,15 +238,37 @@ ConfigValidationResult _validateWireGuard(
     } else if (publicKey.length != 44) {
       warnings.add('invalidConfigKeyFormat');
     }
+    // WARP можно подключить без Endpoint/AllowedIPs: движок добавит
+    // стандартные значения Cloudflare. Для обычного WireGuard такие
+    // поля обязательны, иначе туннель заведомо не поднимется.
+    final isWarp = (peer['publickey'] ?? '').trim() == _warpPublicKey;
     if ((peer['endpoint'] ?? '').isEmpty) {
-      warnings.add('invalidConfigMissingEndpoint');
+      if (isWarp) {
+        warnings.add('warpEndpointDefault');
+      } else {
+        errors.add('invalidConfigMissingEndpoint');
+      }
     }
     if ((peer['allowedips'] ?? '').isEmpty) {
-      warnings.add('invalidConfigMissingAllowedIps');
+      if (isWarp) {
+        warnings.add('warpAllowedIpsDefault');
+      } else {
+        errors.add('invalidConfigMissingAllowedIps');
+      }
     }
   }
-  if (protocol == VpnProtocolType.amneziawg) {
-    warnings.add('protocolNotSupportedHint');
+  if (protocol == VpnProtocolType.amneziawg && interfaceSections.isNotEmpty) {
+    // Нативный AmneziaWG-движок требует все четыре заголовка H1–H4.
+    // Без них он падает при старте туннеля, поэтому не пускаем такой
+    // конфиг в список «поддерживаемых».
+    final interface = interfaceSections.first.attributes;
+    for (final key in const <String>['h1', 'h2', 'h3', 'h4']) {
+      final value = interface[key] ?? '';
+      if (value.isEmpty || int.tryParse(value) == null) {
+        errors.add('invalidAmneziaHeader');
+        break;
+      }
+    }
   }
   return ConfigValidationResult(
     protocol: protocol,

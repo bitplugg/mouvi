@@ -84,6 +84,11 @@ class AppLocalizations {
       'invalidConfigMissingEndpoint': 'Missing Endpoint',
       'invalidConfigMissingAllowedIps': 'Missing AllowedIPs',
       'invalidConfigKeyFormat': 'Key length looks unusual',
+      'invalidAmneziaHeader':
+          'AmneziaWG config must contain numeric H1, H2, H3 and H4 parameters',
+      'warpEndpointDefault': 'WARP: default Endpoint engage.cloudflareclient.com:2408 will be used',
+      'warpAllowedIpsDefault':
+          'WARP: default AllowedIPs 0.0.0.0/0, ::/0 will be used',
       'invalidConfigMissingRemote': 'OpenVPN config has no remote server',
       'invalidConfigFormat': 'Config structure is invalid',
       'protocolNotSupported':
@@ -98,8 +103,8 @@ class AppLocalizations {
       'vpnBusy': 'VPN is busy, try again',
       'connectionFailed': 'Connection failed',
       'engine': 'VPN engine',
-      'engineWireguard': 'WireGuard (userspace)',
-      'engineHint': 'Only WireGuard configs can connect right now. Other configs are imported and marked as not supported.',
+      'engineWireguard': 'WireGuard + AmneziaWG (userspace)',
+      'engineHint': 'WireGuard, AmneziaWG and WARP connect today. OpenVPN, VLESS, Trojan and Shadowsocks are import-only for now.',
       'storageEncrypted': 'Configs are encrypted with Android Keystore',
       'storageWriteFailed': 'Could not save the config securely',
       'supported': 'Supported',
@@ -189,6 +194,11 @@ class AppLocalizations {
       'invalidConfigMissingEndpoint': 'Нет Endpoint',
       'invalidConfigMissingAllowedIps': 'Нет AllowedIPs',
       'invalidConfigKeyFormat': 'Длина ключа выглядит необычно',
+      'invalidAmneziaHeader':
+          'В AmneziaWG-конфиге должны быть числовые параметры H1, H2, H3 и H4',
+      'warpEndpointDefault': 'WARP: будет использован Endpoint по умолчанию engage.cloudflareclient.com:2408',
+      'warpAllowedIpsDefault':
+          'WARP: будет использован AllowedIPs по умолчанию 0.0.0.0/0, ::/0',
       'invalidConfigMissingRemote': 'В конфиге OpenVPN нет remote-сервера',
       'invalidConfigFormat': 'Структура конфига некорректна',
       'protocolNotSupported':
@@ -203,8 +213,8 @@ class AppLocalizations {
       'vpnBusy': 'VPN занят, попробуйте ещё раз',
       'connectionFailed': 'Не удалось подключиться',
       'engine': 'VPN-движок',
-      'engineWireguard': 'WireGuard (userspace)',
-      'engineHint': 'Сейчас подключаются только WireGuard-конфиги. Остальные импортируются и помечаются как неподдерживаемые.',
+      'engineWireguard': 'WireGuard + AmneziaWG (userspace)',
+      'engineHint': 'Сейчас подключаются WireGuard, AmneziaWG и WARP. OpenVPN, VLESS, Trojan и Shadowsocks пока только импортируются.',
       'storageEncrypted': 'Конфиги шифруются через Android Keystore',
       'storageWriteFailed': 'Не удалось безопасно сохранить конфиг',
       'supported': 'Поддерживается',

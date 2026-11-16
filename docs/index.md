@@ -26,9 +26,10 @@ title: Mouvi
 | Протокол | Статус |
 |----------|--------|
 | WireGuard | ✅ |
-| AmneziaWG | ✅ |
-| OpenVPN | 📋 Планируется |
-| Trojan / VLESS / Shadowsocks | 📋 Планируется |
+| AmneziaWG | ✅ (нужны H1–H4) |
+| WARP (Cloudflare) | ✅ как WireGuard |
+| OpenVPN | 📋 Импорт есть, подключение планируется |
+| Trojan / VLESS / Shadowsocks | 📋 Импорт есть, подключение планируется |
 
 ---
 
@@ -44,8 +45,10 @@ title: Mouvi
 1. Скачайте APK из [GitHub Releases](https://github.com/bitplugg/mouvi/releases/latest)
 2. Установите APK
 3. Разрешите VPN-права в настройках
-4. Импортируйте конфигурацию (.ovpn, Shadowsocks JSON, VLESS)
+4. Импортируйте WireGuard/AmneziaWG/WARP-конфигурацию
 5. Подключитесь
+
+OpenVPN, Shadowsocks, VLESS и Trojan пока импортируются без подключения.
 
 ---
 

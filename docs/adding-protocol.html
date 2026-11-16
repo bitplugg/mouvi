@@ -67,11 +67,18 @@ class VlessEngine private constructor(context: Context) : ProtocolEngine {
 
             <div class="step">
                 <span class="step-num">3</span>
-                <strong>Проверить сборку</strong><br>
-                <code>flutter analyze</code> и <code>flutter build apk --debug</code>
+                <strong>Включить протокол в Dart-слое</strong><br>
+                Добавьте его в <code>VpnProtocolType.engineSupported</code> в
+                <code>lib/core/models/vpn_config.dart</code>, проверьте подпись,
+                импорт конфигурации и тесты. Контракт MethodChannel не меняется.
             </div>
 
-            <p><strong>Важно:</strong> Dart-слой (<code>vpn_native_service.dart</code>, <code>connection_provider.dart</code>) не требует изменений — контракт MethodChannel неизменен.</p>
+            <div class="step">
+                <span class="step-num">4</span>
+                <strong>Проверить сборку</strong><br>
+                <code>dart format lib test</code>, <code>flutter analyze</code>,
+                <code>flutter test</code> и <code>flutter build apk --debug</code>
+            </div>
         </div>
     </div>
 </body>
