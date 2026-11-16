@@ -256,7 +256,7 @@ class ServersScreen extends ConsumerWidget {
   ) async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['conf', 'ovpn', 'json', 'txt'],
+      allowedExtensions: ['conf', 'config', 'ovpn', 'json', 'txt', 'wg'],
     );
     if (result.isEmpty) {
       return;

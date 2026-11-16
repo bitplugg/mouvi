@@ -233,10 +233,10 @@ ConfigValidationResult _validateWireGuard(
       warnings.add('invalidConfigKeyFormat');
     }
     if ((peer['endpoint'] ?? '').isEmpty) {
-      errors.add('invalidConfigMissingEndpoint');
+      warnings.add('invalidConfigMissingEndpoint');
     }
     if ((peer['allowedips'] ?? '').isEmpty) {
-      errors.add('invalidConfigMissingAllowedIps');
+      warnings.add('invalidConfigMissingAllowedIps');
     }
   }
   if (protocol == VpnProtocolType.amneziawg) {
