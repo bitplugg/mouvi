@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
+import 'package:mouvi/core/utils/format_utils.dart';
 import 'package:mouvi/state/connection_provider.dart';
 import 'package:mouvi/state/locale_provider.dart';
 import 'package:mouvi/state/saved_configs_provider.dart';
@@ -117,6 +118,13 @@ class HomeScreen extends ConsumerWidget {
                 ],
                 const SizedBox(height: 32),
                 _buildAction(context, ref, localizations, connection),
+                if (connection.status == VpnConnectionStatus.connected) ...[
+                  const SizedBox(height: 24),
+                  _TrafficPanel(
+                    connection: connection,
+                    localizations: localizations,
+                  ),
+                ],
               ],
             ),
           ),
@@ -291,6 +299,88 @@ class _UptimeChipState extends State<_UptimeChip> {
         '${widget.localizations.t('uptime')} ${formatUptime(widget.start)}',
       ),
       labelStyle: Theme.of(context).textTheme.labelMedium,
+    );
+  }
+}
+
+class _TrafficPanel extends StatelessWidget {
+  const _TrafficPanel({required this.connection, required this.localizations});
+
+  final VpnConnectionState connection;
+  final AppLocalizations localizations;
+
+  @override
+  Widget build(BuildContext context) {
+    final age = handshakeAge(DateTime.now(), connection.lastHandshakeMs);
+    final handshake = age == null
+        ? localizations.t('handshakeNone')
+        : '${age.value} ${localizations.t(_unitKey(age.unit))} '
+              '${localizations.t('ago')}';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+        child: Row(
+          children: [
+            Expanded(
+              child: _TrafficItem(
+                icon: Icons.arrow_downward,
+                label: localizations.t('received'),
+                value: formatBytes(connection.rxBytes),
+              ),
+            ),
+            Expanded(
+              child: _TrafficItem(
+                icon: Icons.arrow_upward,
+                label: localizations.t('sent'),
+                value: formatBytes(connection.txBytes),
+              ),
+            ),
+            Expanded(
+              child: _TrafficItem(
+                icon: Icons.handshake_outlined,
+                label: localizations.t('handshake'),
+                value: handshake,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _unitKey(String unit) {
+    return switch (unit) {
+      'seconds' => 'secondsShort',
+      'minutes' => 'minutesShort',
+      'hours' => 'hoursShort',
+      _ => 'daysShort',
+    };
+  }
+}
+
+class _TrafficItem extends StatelessWidget {
+  const _TrafficItem({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(height: 6),
+        Text(label, textAlign: TextAlign.center, style: textTheme.labelSmall),
+        const SizedBox(height: 2),
+        Text(value, textAlign: TextAlign.center, style: textTheme.bodyMedium),
+      ],
     );
   }
 }

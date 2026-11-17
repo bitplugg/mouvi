@@ -30,12 +30,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: '3.47.7'
+          cache: true
 
       - name: Flutter pub get
         run: flutter pub get
@@ -49,8 +51,8 @@ jobs:
       - name: Flutter test
         run: flutter test
 
-  debug-apk:
-    name: Build debug APK
+  android-unit-tests:
+    name: Android unit tests
     needs: checks
     runs-on: ubuntu-latest
     steps:
@@ -62,12 +64,46 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: '3.47.7'
+          cache: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Run native unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+  debug-apk:
+    name: Build debug APK
+    needs: [checks, android-unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.7'
+          cache: true
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -88,8 +124,13 @@ jobs:
 
   release-apk:
     name: Build release APK and publish release
-    needs: checks
+    needs: [checks, android-unit-tests]
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,12 +142,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: '3.47.7'
+          cache: true
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -128,17 +171,10 @@ jobs:
 
       - name: Decode signing keystore
         if: env.KEYSTORE_BASE64 != ''
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: echo "$KEYSTORE_BASE64" | base64 -d > android/app/mouvi-release.jks
 
       - name: Write signing properties
         if: env.KEYSTORE_BASE64 != ''
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           cat > android/key.properties <<'KEYEOF'
           storeFile=mouvi-release.jks
@@ -147,11 +183,12 @@ jobs:
           keyPassword=$KEY_PASSWORD
           KEYEOF
 
-      - name: Build release APK (with retries)
+      - name: Build release APKs (split per ABI, with retries)
         run: |
           MAX_RETRIES=3
           for i in $(seq 1 $MAX_RETRIES); do
-            if flutter build apk --release; then
+            if flutter build apk --release --split-per-abi \
+              --target-platform android-arm,android-arm64; then
               echo "Build succeeded on attempt $i"
               exit 0
             fi
@@ -187,31 +224,43 @@ jobs:
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Upload release APK
+      - name: Upload release APKs
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: release-apks
+          path: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
 
       - name: Publish GitHub Release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && env.KEYSTORE_BASE64 != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          APK="build/app/outputs/flutter-apk/app-release.apk"
+          APK_ARM64="build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
+          APK_ARM="build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk"
           VERSION_NAME="${{ steps.version.outputs.version_name }}"
           VERSION_CODE="${{ steps.version.outputs.version_code }}"
           CHANGELOG=$(cat changelog.txt)
-          SHA256=$(sha256sum "$APK" | awk '{print $1}')
+          SHA_ARM64=$(sha256sum "$APK_ARM64" | awk '{print $1}')
+          SHA_ARM=$(sha256sum "$APK_ARM" | awk '{print $1}')
 
           {
             echo "## Mouvi v${VERSION_NAME} (build ${VERSION_CODE})"
             echo ""
             echo "### 📦 Установка"
             echo ""
-            echo "Скачайте **app-release.apk** из вложений этого релиза и установите на Android-устройство."
-            echo "При первой установке потребуется разрешить **VPN-права** в настройках системы."
+            echo "Скачайте APK для своей архитектуры и установите на Android-устройство:"
+            echo ""
+            echo "| Файл | Для чего |"
+            echo "|------|----------|"
+            echo "| **app-arm64-v8a-release.apk** | Почти все современные телефоны |"
+            echo "| **app-armeabi-v7a-release.apk** | Старые 32-битные устройства |"
+            echo ""
+            echo "Если не уверены — берите arm64-v8a. При первой установке потребуется разрешить **VPN-права** в настройках системы."
+            echo ""
+            echo "> Если ранее был установлен APK из v1.0.0 (подпись debug), его нужно удалить перед установкой этого релиза: ключ подписи изменился."
             echo ""
             echo "### 🔧 Что нового"
             echo ""
@@ -235,8 +284,14 @@ jobs:
             echo ""
             echo "### 📄 SHA-256"
             echo ""
+            echo "**app-arm64-v8a-release.apk**"
             echo "---"
-            echo "$SHA256"
+            echo "$SHA_ARM64"
+            echo "---"
+            echo ""
+            echo "**app-armeabi-v7a-release.apk**"
+            echo "---"
+            echo "$SHA_ARM"
             echo "---"
             echo ""
             echo "Создано автоматически через GitHub Actions."
@@ -244,7 +299,7 @@ jobs:
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists, updating assets and notes..."
-            gh release upload "$TAG" "$APK" --clobber
+            gh release upload "$TAG" "$APK_ARM64" "$APK_ARM" --clobber
             gh release edit "$TAG" \
               --title "Mouvi v${VERSION_NAME}" \
               --notes-file release-notes.md \
@@ -256,5 +311,5 @@ jobs:
               --title "Mouvi v${VERSION_NAME}" \
               --notes-file release-notes.md \
               --latest \
-              "$APK"
+              "$APK_ARM64" "$APK_ARM"
           fi

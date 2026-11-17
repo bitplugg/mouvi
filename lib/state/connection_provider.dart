@@ -26,11 +26,20 @@ class VpnConnectionState {
     this.connectedAt,
     this.errorCode,
     this.errorDetails,
+    this.rxBytes = 0,
+    this.txBytes = 0,
+    this.lastHandshakeMs = 0,
   });
 
   final VpnConnectionStatus status;
   final VpnConfig? activeConfig;
   final DateTime? connectedAt;
+
+  /// Трафик и рукопожатие из нативного бэкенда. Нули означают, что
+  /// статистика ещё не получена (UI не выдумывает значения).
+  final int rxBytes;
+  final int txBytes;
+  final int lastHandshakeMs;
 
   /// Машинный код ошибки (см. [VpnEngineException]).
   final String? errorCode;
@@ -48,6 +57,9 @@ class VpnConnectionState {
     String? errorCode,
     String? errorDetails,
     bool clearError = false,
+    int? rxBytes,
+    int? txBytes,
+    int? lastHandshakeMs,
   }) {
     return VpnConnectionState(
       status: status ?? this.status,
@@ -55,6 +67,9 @@ class VpnConnectionState {
       connectedAt: clearConnectedAt ? null : (connectedAt ?? this.connectedAt),
       errorCode: clearError ? null : (errorCode ?? this.errorCode),
       errorDetails: clearError ? null : (errorDetails ?? this.errorDetails),
+      rxBytes: rxBytes ?? this.rxBytes,
+      txBytes: txBytes ?? this.txBytes,
+      lastHandshakeMs: lastHandshakeMs ?? this.lastHandshakeMs,
     );
   }
 }
@@ -64,11 +79,16 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
   static const String _connectedAtPrefsKey = 'mouvi.connected_at_ms';
 
   StreamSubscription<VpnStateSnapshot>? _nativeSubscription;
+  Timer? _statsTimer;
   String? _activeConfigId;
+  bool _autoConnectTried = false;
+  bool _autoConnectInFlight = false;
 
   @override
   VpnConnectionState build() {
     ref.onDispose(() {
+      _statsTimer?.cancel();
+      _statsTimer = null;
       unawaited(_nativeSubscription?.cancel());
     });
     _nativeSubscription = ref
@@ -93,9 +113,59 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
           state = state.copyWith(activeConfig: config);
         }
       }
+      unawaited(_maybeAutoConnect());
+    });
+    ref.listen<VpnSettings>(vpnSettingsProvider, (previous, next) {
+      if (next.loaded) {
+        unawaited(_maybeAutoConnect());
+      }
     });
     unawaited(_restoreFromNative());
     return const VpnConnectionState();
+  }
+
+  /// Автоподключение при запуске.
+  ///
+  /// Срабатывает один раз за процесс и только если разрешение VPN уже
+  /// выдано: иначе приложение неожиданно показывало бы системный диалог.
+  Future<void> _maybeAutoConnect() async {
+    if (_autoConnectTried || _autoConnectInFlight || !ref.mounted) {
+      return;
+    }
+    final settings = ref.read(vpnSettingsProvider);
+    if (!settings.loaded || !settings.autoConnectOnLaunch) {
+      return;
+    }
+    if (state.isBusy || state.status != VpnConnectionStatus.disconnected) {
+      _autoConnectTried = true;
+      return;
+    }
+    final config = state.activeConfig;
+    if (config == null) {
+      // Конфиги ещё загружаются — попробуем после обновления списка.
+      return;
+    }
+    if (!config.protocol.engineSupported) {
+      _autoConnectTried = true;
+      return;
+    }
+    _autoConnectInFlight = true;
+    try {
+      final hasPermission = await ref
+          .read(vpnEngineProvider)
+          .hasVpnPermission();
+      if (!ref.mounted) {
+        return;
+      }
+      if (!hasPermission) {
+        _autoConnectTried = true;
+        return;
+      }
+      _autoConnectTried = true;
+      await connect(config);
+    } finally {
+      _autoConnectInFlight = false;
+    }
   }
 
   Future<void> _restoreFromNative() async {
@@ -121,7 +191,11 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         // После пересоздания Activity туннель остаётся поднятым, поэтому
         // берём сохранённое время старта, чтобы uptime не сбрасывался.
         connectedAt: storedConnectedAt ?? DateTime.now(),
+        rxBytes: snapshot.rxBytes,
+        txBytes: snapshot.txBytes,
+        lastHandshakeMs: snapshot.lastHandshakeMs,
       );
+      _startStatsPolling();
     } else if (config != null) {
       // Туннель не поднят, но последний выбранный сервер сохраняем.
       state = VpnConnectionState(
@@ -129,6 +203,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         activeConfig: config,
       );
     }
+    await _maybeAutoConnect();
   }
 
   Future<SharedPreferences?> _prefs() async {
@@ -226,8 +301,11 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     }
 
     final settings = ref.read(vpnSettingsProvider);
-    final excluded = settings.splitTunnelingEnabled
-        ? settings.excludedApplications
+    final excluded = settings.splitMode == SplitTunnelingMode.exclude
+        ? settings.selectedApplications
+        : const <String>[];
+    final included = settings.splitMode == SplitTunnelingMode.include
+        ? settings.selectedApplications
         : const <String>[];
     state = VpnConnectionState(
       status: VpnConnectionStatus.connecting,
@@ -239,6 +317,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
           .connect(
             config,
             excludedApplications: excluded,
+            includedApplications: included,
             dnsProtection: settings.dnsProtectionEnabled,
           )
           .timeout(const Duration(minutes: 2));
@@ -254,6 +333,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         activeConfig: config,
         connectedAt: connectedAt,
       );
+      _startStatsPolling();
       _notifyPush('connected', config);
     } on TimeoutException {
       if (!ref.mounted) {
@@ -296,6 +376,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
 
   Future<void> _disconnectInternal({required bool notify}) async {
     final config = state.activeConfig;
+    _stopStatsPolling();
     state = state.copyWith(
       status: VpnConnectionStatus.disconnecting,
       clearError: true,
@@ -356,6 +437,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     if (config == null || state.isBusy) {
       return;
     }
+    _stopStatsPolling();
     state = const VpnConnectionState();
     await connect(config);
   }
@@ -367,9 +449,69 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     }
     _activeConfigId = config.id;
     unawaited(_writeActiveConfigId(config.id));
+    _stopStatsPolling();
     state = VpnConnectionState(
       status: VpnConnectionStatus.disconnected,
       activeConfig: config,
+    );
+  }
+
+  /// Обработать открытие приложения из плитки Quick Settings.
+  ///
+  /// Возвращает `false`, если подключаться не к чему: вызывающая сторона
+  /// может показать список серверов.
+  Future<bool> quickToggle() async {
+    if (state.isBusy) {
+      return true;
+    }
+    if (state.status == VpnConnectionStatus.connected) {
+      await disconnect();
+      return true;
+    }
+    final configs = ref.read(savedConfigsProvider);
+    final config =
+        state.activeConfig ??
+        _resolveConfig(_activeConfigId) ??
+        (configs.isEmpty ? null : configs.first);
+    if (config == null) {
+      return false;
+    }
+    state = state.copyWith(activeConfig: config);
+    await connect(config);
+    return true;
+  }
+
+  /// Периодически обновлять статистику туннеля.
+  ///
+  /// Нативный слой присылает события только при смене состояния, а трафик
+  /// и время рукопожатия меняются постоянно. Опрос идёт только пока
+  /// туннель поднят и прекращается при отключении/ошибке.
+  void _startStatsPolling() {
+    _statsTimer ??= Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_syncStats());
+    });
+  }
+
+  void _stopStatsPolling() {
+    _statsTimer?.cancel();
+    _statsTimer = null;
+  }
+
+  Future<void> _syncStats() async {
+    if (!ref.mounted || state.status != VpnConnectionStatus.connected) {
+      _stopStatsPolling();
+      return;
+    }
+    final snapshot = await ref.read(vpnEngineProvider).getState();
+    if (!ref.mounted ||
+        !snapshot.isConnected ||
+        state.status != VpnConnectionStatus.connected) {
+      return;
+    }
+    state = state.copyWith(
+      rxBytes: snapshot.rxBytes,
+      txBytes: snapshot.txBytes,
+      lastHandshakeMs: snapshot.lastHandshakeMs,
     );
   }
 
@@ -390,7 +532,11 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         status: VpnConnectionStatus.connected,
         activeConfig: config,
         connectedAt: state.connectedAt ?? DateTime.now(),
+        rxBytes: snapshot.rxBytes,
+        txBytes: snapshot.txBytes,
+        lastHandshakeMs: snapshot.lastHandshakeMs,
       );
+      _startStatsPolling();
       return;
     }
     // Туннель опущен. Пока идёт наш собственный connect/disconnect,
@@ -398,6 +544,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     if (state.status != VpnConnectionStatus.connected) {
       return;
     }
+    _stopStatsPolling();
     final config = state.activeConfig;
     unawaited(_writeConnectedAt(null));
     state = VpnConnectionState(
@@ -429,6 +576,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
             protocol: config?.protocol.name,
             title: title,
             text: text,
+            disconnectAction: localizations.t('disconnect'),
           ),
     );
   }

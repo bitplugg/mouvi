@@ -7,6 +7,7 @@ data class VpnConnectRequest(
     val protocol: String,
     val content: String,
     val excludedApplications: List<String>,
+    val includedApplications: List<String>,
     val dnsProtection: Boolean,
 )
 

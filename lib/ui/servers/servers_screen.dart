@@ -3,13 +3,17 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
+import 'package:mouvi/core/services/config_export_service.dart';
 import 'package:mouvi/core/utils/config_parser.dart';
+import 'package:mouvi/core/utils/format_utils.dart';
 import 'package:mouvi/state/connection_provider.dart';
 import 'package:mouvi/state/locale_provider.dart';
 import 'package:mouvi/state/saved_configs_provider.dart';
+import 'package:mouvi/ui/servers/qr_scan_screen.dart';
 
 class ServersScreen extends ConsumerWidget {
   const ServersScreen({super.key});
@@ -108,6 +112,7 @@ class ServersScreen extends ConsumerWidget {
           busy: connection.isBusy,
           onConnect: () => _connectTo(context, ref, config, localizations),
           onRename: () => _renameConfig(context, ref, config, localizations),
+          onExport: () => _exportConfig(context, ref, config, localizations),
           onDelete: () => _deleteConfig(context, ref, config, localizations),
         );
       },
@@ -242,6 +247,22 @@ class ServersScreen extends ConsumerWidget {
                   await _showPasteDialog(ref, context, localizations);
                 },
               ),
+              ListTile(
+                leading: const Icon(Icons.content_paste),
+                title: Text(localizations.t('pasteFromClipboard')),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _pasteFromClipboard(ref, context, localizations);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.qr_code_scanner),
+                title: Text(localizations.t('scanQr')),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await _scanQr(ref, context, localizations);
+                },
+              ),
             ],
           ),
         );
@@ -352,6 +373,97 @@ class ServersScreen extends ConsumerWidget {
     contentController.dispose();
   }
 
+  /// Вставка конфигурации из системного буфера обмена.
+  ///
+  /// Пользователь сам копирует текст конфига, приложение не читает буфер
+  /// автоматически при запуске.
+  Future<void> _pasteFromClipboard(
+    WidgetRef ref,
+    BuildContext context,
+    AppLocalizations localizations,
+  ) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final content = data?.text?.trim();
+    if (content == null || content.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizations.t('clipboardEmpty'))),
+        );
+      }
+      return;
+    }
+    if (!context.mounted) {
+      return;
+    }
+    await _addConfig(ref, context, localizations, content);
+  }
+
+  Future<void> _scanQr(
+    WidgetRef ref,
+    BuildContext context,
+    AppLocalizations localizations,
+  ) async {
+    final content = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (routeContext) => QrScanScreen(localizations: localizations),
+      ),
+    );
+    final trimmed = content?.trim();
+    if (trimmed == null || trimmed.isEmpty || !context.mounted) {
+      return;
+    }
+    await _addConfig(ref, context, localizations, trimmed);
+  }
+
+  /// Экспорт конфигурации в файл через системный диалог.
+  ///
+  /// Перед сохранением показываем предупреждение: файл содержит приватный
+  /// ключ, и приложение не должно создавать его молча.
+  Future<void> _exportConfig(
+    BuildContext context,
+    WidgetRef ref,
+    VpnConfig config,
+    AppLocalizations localizations,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(localizations.t('exportWarningTitle')),
+        content: Text(localizations.t('exportWarning')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(localizations.t('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(localizations.t('exportAction')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) {
+      return;
+    }
+    String messageKey;
+    try {
+      final saved = await ref
+          .read(configExportServiceProvider)
+          .saveConfig(
+            fileName: exportFileName(config.name, config.protocol),
+            content: config.content,
+          );
+      messageKey = saved ? 'configExported' : 'configExportCancelled';
+    } on ConfigExportException {
+      messageKey = 'configExportFailed';
+    }
+    if (!context.mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(localizations.t(messageKey))));
+  }
+
   Future<void> _addConfig(
     WidgetRef ref,
     BuildContext context,
@@ -426,6 +538,7 @@ class _ServerCard extends StatelessWidget {
     required this.busy,
     required this.onConnect,
     required this.onRename,
+    required this.onExport,
     required this.onDelete,
   });
 
@@ -436,6 +549,7 @@ class _ServerCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onConnect;
   final VoidCallback onRename;
+  final VoidCallback onExport;
   final VoidCallback onDelete;
 
   @override
@@ -492,6 +606,8 @@ class _ServerCard extends StatelessWidget {
             switch (value) {
               case 'rename':
                 onRename();
+              case 'export':
+                onExport();
               case 'delete':
                 onDelete();
             }
@@ -503,6 +619,14 @@ class _ServerCard extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.edit_outlined),
                 title: Text(localizations.t('rename')),
+              ),
+            ),
+            PopupMenuItem(
+              value: 'export',
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.save_alt),
+                title: Text(localizations.t('exportConfig')),
               ),
             ),
             PopupMenuItem(

@@ -118,35 +118,68 @@ class SettingsScreen extends ConsumerWidget {
           Card(
             child: Column(
               children: [
-                SwitchListTile(
-                  title: Text(localizations.t('splitTunneling')),
-                  subtitle: Text(localizations.t('splitTunnelingHint')),
-                  value: settings.splitTunnelingEnabled,
-                  onChanged: (value) {
-                    unawaited(
-                      ref
-                          .read(vpnSettingsProvider.notifier)
-                          .updateSplitTunnelingEnabled(value),
-                    );
-                  },
-                ),
-                ListTile(
-                  enabled: settings.splitTunnelingEnabled,
-                  leading: const Icon(Icons.apps),
-                  title: Text(localizations.t('chooseApps')),
-                  subtitle: Text(
-                    '${localizations.t('appsSelected')}: ${settings.excludedApplications.length}',
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        localizations.t('splitTunneling'),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        localizations.t('splitTunnelingHint'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<SplitTunnelingMode>(
+                          segments: [
+                            ButtonSegment(
+                              value: SplitTunnelingMode.off,
+                              label: Text(localizations.t('splitOff')),
+                            ),
+                            ButtonSegment(
+                              value: SplitTunnelingMode.exclude,
+                              label: Text(localizations.t('splitExclude')),
+                            ),
+                            ButtonSegment(
+                              value: SplitTunnelingMode.include,
+                              label: Text(localizations.t('splitInclude')),
+                            ),
+                          ],
+                          selected: <SplitTunnelingMode>{settings.splitMode},
+                          onSelectionChanged: (value) {
+                            unawaited(
+                              ref
+                                  .read(vpnSettingsProvider.notifier)
+                                  .updateSplitMode(value.first),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: settings.splitTunnelingEnabled
-                      ? () => _pickApps(
-                          context,
-                          ref,
-                          localizations,
-                          settings.excludedApplications,
-                        )
-                      : null,
                 ),
+                if (settings.splitTunnelingEnabled) ...[
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.apps),
+                    title: Text(localizations.t('chooseApps')),
+                    subtitle: Text(
+                      '${localizations.t('appsSelected')}: ${settings.selectedApplications.length}',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _pickApps(
+                      context,
+                      ref,
+                      localizations,
+                      settings.selectedApplications,
+                    ),
+                  ),
+                ],
                 const Divider(height: 1),
                 SwitchListTile(
                   title: Text(localizations.t('dnsProtection')),
@@ -157,6 +190,19 @@ class SettingsScreen extends ConsumerWidget {
                       ref
                           .read(vpnSettingsProvider.notifier)
                           .updateDnsProtectionEnabled(value),
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  title: Text(localizations.t('autoConnect')),
+                  subtitle: Text(localizations.t('autoConnectHint')),
+                  value: settings.autoConnectOnLaunch,
+                  onChanged: (value) {
+                    unawaited(
+                      ref
+                          .read(vpnSettingsProvider.notifier)
+                          .updateAutoConnectOnLaunch(value),
                     );
                   },
                 ),
@@ -249,7 +295,7 @@ class SettingsScreen extends ConsumerWidget {
     }
     await ref
         .read(vpnSettingsProvider.notifier)
-        .updateExcludedApplications(result.toList());
+        .updateSelectedApplications(result.toList());
   }
 }
 

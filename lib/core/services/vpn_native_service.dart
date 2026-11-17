@@ -11,6 +11,9 @@ class VpnStateSnapshot {
     this.tunnelName,
     this.alwaysOn = false,
     this.lockdown = false,
+    this.rxBytes = 0,
+    this.txBytes = 0,
+    this.lastHandshakeMs = 0,
   });
 
   factory VpnStateSnapshot.fromChannel(Object? value) {
@@ -26,7 +29,21 @@ class VpnStateSnapshot {
           : null,
       alwaysOn: value['alwaysOn'] == true,
       lockdown: value['lockdown'] == true,
+      rxBytes: _toInt(value['rxBytes']),
+      txBytes: _toInt(value['txBytes']),
+      lastHandshakeMs: _toInt(value['lastHandshakeMs']),
     );
+  }
+
+  static int _toInt(Object? value) {
+    if (value is int) {
+      return value < 0 ? 0 : value;
+    }
+    if (value is num) {
+      final rounded = value.round();
+      return rounded < 0 ? 0 : rounded;
+    }
+    return 0;
   }
 
   final VpnEngineStatus status;
@@ -38,10 +55,23 @@ class VpnStateSnapshot {
   /// Включён ли системный режим блокировки (Lockdown) для Always-on VPN.
   final bool lockdown;
 
+  /// Получено байт с момента подключения.
+  final int rxBytes;
+
+  /// Отправлено байт с момента подключения.
+  final int txBytes;
+
+  /// Время последнего рукопожатия (Unix ms) или 0, если его ещё не было.
+  final int lastHandshakeMs;
+
   bool get isConnected => status == VpnEngineStatus.up;
 
+  bool get hasHandshake => lastHandshakeMs > 0;
+
   @override
-  String toString() => 'VpnStateSnapshot(${status.name}, tunnel: $tunnelName)';
+  String toString() =>
+      'VpnStateSnapshot(${status.name}, tunnel: $tunnelName, '
+      'rx: $rxBytes, tx: $txBytes)';
 }
 
 /// Ошибка нативного VPN-движка с машинным кодом.
@@ -76,11 +106,22 @@ abstract class VpnEngine {
   Future<void> connect(
     VpnConfig config, {
     List<String> excludedApplications = const <String>[],
+    List<String> includedApplications = const <String>[],
     bool dnsProtection = true,
   });
 
   /// Опустить туннель. Бросает [VpnEngineException] при ошибке.
   Future<void> disconnect();
+
+  /// Действие, с которым приложение открыли (плитка Quick Settings).
+  /// Возвращает `toggle` один раз, затем `null`.
+  Future<String?> getLaunchAction();
+
+  /// Действия, приходящие при повторном открытии Activity из плитки.
+  Stream<String> get launchActions;
+
+  /// Есть ли уже выданное системе разрешение VPN (без запроса диалога).
+  Future<bool> hasVpnPermission();
 
   /// Реальное состояние туннеля (в том числе после пересоздания Activity).
   Future<VpnStateSnapshot> getState();
@@ -93,12 +134,17 @@ abstract class VpnEngine {
 }
 
 class MethodChannelVpnEngine extends VpnEngine {
-  MethodChannelVpnEngine({MethodChannel? channel, EventChannel? eventChannel})
-    : _channel = channel ?? const MethodChannel('mouvi/vpn'),
-      _eventChannel = eventChannel ?? const EventChannel('mouvi/vpn_events');
+  MethodChannelVpnEngine({
+    MethodChannel? channel,
+    EventChannel? eventChannel,
+    EventChannel? actionChannel,
+  }) : _channel = channel ?? const MethodChannel('mouvi/vpn'),
+       _eventChannel = eventChannel ?? const EventChannel('mouvi/vpn_events'),
+       _actionChannel = actionChannel ?? const EventChannel('mouvi/actions');
 
   final MethodChannel _channel;
   final EventChannel _eventChannel;
+  final EventChannel _actionChannel;
 
   VpnEngineException _mapPlatformException(PlatformException error) {
     final details = error.message;
@@ -122,6 +168,7 @@ class MethodChannelVpnEngine extends VpnEngine {
   Future<void> connect(
     VpnConfig config, {
     List<String> excludedApplications = const <String>[],
+    List<String> includedApplications = const <String>[],
     bool dnsProtection = true,
   }) async {
     try {
@@ -131,6 +178,7 @@ class MethodChannelVpnEngine extends VpnEngine {
         'protocol': config.protocol.channelName,
         'content': config.content,
         'excludedApplications': excludedApplications,
+        'includedApplications': includedApplications,
         'dnsProtection': dnsProtection,
       });
     } on PlatformException catch (error) {
@@ -168,6 +216,36 @@ class MethodChannelVpnEngine extends VpnEngine {
     return _eventChannel.receiveBroadcastStream().map(
       VpnStateSnapshot.fromChannel,
     );
+  }
+
+  @override
+  Stream<String> get launchActions {
+    return _actionChannel
+        .receiveBroadcastStream()
+        .map((event) => event?.toString() ?? '')
+        .where((event) => event.isNotEmpty);
+  }
+
+  @override
+  Future<String?> getLaunchAction() async {
+    try {
+      return await _channel.invokeMethod<String>('getLaunchAction');
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  @override
+  Future<bool> hasVpnPermission() async {
+    try {
+      return await _channel.invokeMethod<bool>('hasVpnPermission') ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
   }
 
   @override

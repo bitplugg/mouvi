@@ -51,7 +51,13 @@ class WireGuardEngine private constructor(context: Context) : ProtocolEngine {
     override fun connect(request: VpnConnectRequest, callback: (VpnResult<String>) -> Unit) {
         executor.execute {
             val result = try {
-                val runtimeConfig = injectRuntimeOptions(request)
+                val runtimeConfig = RuntimeConfigAugmenter.augment(
+                    content = request.content,
+                    dnsProtection = request.dnsProtection,
+                    excludedApplications = request.excludedApplications,
+                    includedApplications = request.includedApplications,
+                    applyWarpDefaults = true,
+                )
                 val config = Config.parse(
                     ByteArrayInputStream(runtimeConfig.toByteArray(Charsets.UTF_8)),
                 )
@@ -111,13 +117,51 @@ class WireGuardEngine private constructor(context: Context) : ProtocolEngine {
         } catch (_: Throwable) {
             false
         }
+        val statistics = if (isUp && activeBackend != null) {
+            statisticsMap(activeBackend)
+        } else {
+            emptyStatisticsMap()
+        }
         return mapOf(
             "status" to if (isUp) "up" else "down",
             "tunnelName" to TUNNEL_NAME,
             "alwaysOn" to alwaysOn,
             "lockdown" to lockdown,
-        )
+        ) + statistics
     }
+
+    /**
+     * Трафик и время последнего рукопожатия.
+     *
+     * Если бэкенд ещё не отдал статистику, возвращаем нули: UI покажет
+     * «нет данных», а не выдуманные значения.
+     */
+    private fun statisticsMap(activeBackend: GoBackend): Map<String, Any?> {
+        return try {
+            val stats = activeBackend.getStatistics(tunnel)
+            var lastHandshake = 0L
+            for (key in stats.peers()) {
+                val peer = stats.peer(key) ?: continue
+                lastHandshake = maxOf(
+                    lastHandshake,
+                    peer.latestHandshakeEpochMillis(),
+                )
+            }
+            mapOf(
+                "rxBytes" to stats.totalRx(),
+                "txBytes" to stats.totalTx(),
+                "lastHandshakeMs" to lastHandshake,
+            )
+        } catch (_: Throwable) {
+            emptyStatisticsMap()
+        }
+    }
+
+    private fun emptyStatisticsMap(): Map<String, Any?> = mapOf(
+        "rxBytes" to 0L,
+        "txBytes" to 0L,
+        "lastHandshakeMs" to 0L,
+    )
 
     override fun currentStateMap(): Map<String, Any?> = getState()
 
@@ -135,131 +179,8 @@ class WireGuardEngine private constructor(context: Context) : ProtocolEngine {
         return VpnResult.Failure(code, error.reason.name)
     }
 
-    /**
-     * Добавляет к конфигу параметры, выбранные в приложении:
-     * исключённые приложения (реальный split tunneling) и защищённый DNS,
-     * если в конфиге DNS не задан.
-     */
-    private fun injectRuntimeOptions(request: VpnConnectRequest): String {
-        val lines = request.content.trim().removePrefix("\uFEFF").lines().toMutableList()
-        val interfaceStart = lines.indexOfFirst { it.trim().equals("[Interface]", ignoreCase = true) }
-        if (interfaceStart < 0) {
-            // Config.parse ниже вернёт понятную ошибку.
-            return request.content
-        }
-        var interfaceEnd = lines.size
-        var dnsLineIndex = -1
-        var hasDnsValue = false
-        var excludedLineIndex = -1
-        val existingExcluded = LinkedHashSet<String>()
-        for (index in interfaceStart + 1 until lines.size) {
-            val line = lines[index].trim()
-            if (line.startsWith("[") && line.endsWith("]")) {
-                interfaceEnd = index
-                break
-            }
-            val key = line.substringBefore('=').trim().lowercase()
-            val value = line.substringAfter('=').trim()
-            when {
-                key.equals("dns", ignoreCase = true) -> {
-                    dnsLineIndex = index
-                    if (value.isNotEmpty()) {
-                        hasDnsValue = true
-                    }
-                }
-                key.equals("excludedapplications", ignoreCase = true) -> {
-                    excludedLineIndex = index
-                    value.split(',')
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .forEach { existingExcluded.add(it) }
-                }
-            }
-        }
-        val additions = mutableListOf<String>()
-        if (request.dnsProtection && !hasDnsValue) {
-            // Если в конфиге есть пустой DNS =, заменяем строку, а не
-            // добавляем вторую (WireGuard не допускает дубликаты ключей).
-            val dnsLine = "DNS = 1.1.1.1, 1.0.0.1"
-            if (dnsLineIndex >= 0) {
-                lines[dnsLineIndex] = dnsLine
-            } else {
-                additions.add(dnsLine)
-            }
-        }
-        val selectedExcluded = request.excludedApplications
-            .asSequence()
-            .map { it.trim() }
-            .filter { PACKAGE_PATTERN.matches(it) }
-            .toList()
-        if (selectedExcluded.isNotEmpty() || existingExcluded.isNotEmpty()) {
-            val merged = LinkedHashSet<String>()
-            merged.addAll(existingExcluded)
-            merged.addAll(selectedExcluded)
-            val excludedLine = "ExcludedApplications = ${merged.joinToString(", ")}"
-            // Если приложение уже задало список, объединяем его с выбором
-            // пользователя вместо создания второго ключа.
-            if (excludedLineIndex >= 0) {
-                lines[excludedLineIndex] = excludedLine
-            } else {
-                additions.add(excludedLine)
-            }
-        }
-        // WARP-конфиги Cloudflare иногда не содержат Endpoint/AllowedIPs.
-        // Подставляем стандартные значения, иначе туннель не поднимется.
-        // Обычные WireGuard-конфиги не трогаем.
-        var peerEnd = lines.size
-        var warpPeer = false
-        var peerHasEndpoint = false
-        var peerHasAllowedIps = false
-        var inPeer = false
-        for (index in interfaceEnd until lines.size) {
-            val line = lines[index].trim()
-            if (line.startsWith("[") && line.endsWith("]")) {
-                if (inPeer) {
-                    peerEnd = index
-                    break
-                }
-                inPeer = line.equals("[Peer]", ignoreCase = true)
-                continue
-            }
-            if (!inPeer || !line.contains('=')) {
-                continue
-            }
-            val key = line.substringBefore('=').trim().lowercase()
-            val value = line.substringAfter('=').trim()
-            when (key) {
-                "publickey" -> if (value == WARP_PUBLIC_KEY) warpPeer = true
-                "endpoint" -> if (value.isNotEmpty()) peerHasEndpoint = true
-                "allowedips" -> if (value.isNotEmpty()) peerHasAllowedIps = true
-            }
-        }
-        val peerAdditions = mutableListOf<String>()
-        if (warpPeer) {
-            if (!peerHasEndpoint) {
-                peerAdditions.add("Endpoint = engage.cloudflareclient.com:2408")
-            }
-            if (!peerHasAllowedIps) {
-                peerAdditions.add("AllowedIPs = 0.0.0.0/0, ::/0")
-            }
-        }
-        if (additions.isNotEmpty()) {
-            lines.addAll(interfaceEnd, additions)
-        }
-        if (peerAdditions.isNotEmpty()) {
-            // Interface-вставки сдвигают индекс конца Peer-секции.
-            lines.addAll(peerEnd + additions.size, peerAdditions)
-        }
-        return lines.joinToString("\n")
-    }
-
     companion object {
         const val TUNNEL_NAME = "mouvi"
-
-        private const val WARP_PUBLIC_KEY =
-            "bmXOC+F1FxEMF9dyiK2H5/56nH5M2nH0e3hv0Xw2FzY="
-
-        private val PACKAGE_PATTERN = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
 
         @Volatile
         private var instance: WireGuardEngine? = null

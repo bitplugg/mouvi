@@ -37,6 +37,7 @@ class MouviNotifications(private val context: Context) {
         protocol: String?,
         titleOverride: String? = null,
         textOverride: String? = null,
+        disconnectActionOverride: String? = null,
     ) {
         if (!isEnabled()) {
             return
@@ -78,8 +79,29 @@ class MouviNotifications(private val context: Context) {
                 .setSmallIcon(R.drawable.ic_stat_mouvi)
                 .setContentTitle(title)
                 .setContentIntent(pendingIntent)
-                .setAutoCancel(true)
+                .setAutoCancel(!connected)
+                .setOngoing(connected)
                 .setOnlyAlertOnce(true)
+            if (connected) {
+                // Отключить туннель можно прямо из уведомления.
+                val disconnectIntent = Intent(context, MouviActionReceiver::class.java).apply {
+                    action = MouviActionReceiver.ACTION_DISCONNECT
+                }
+                val disconnectPendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    1,
+                    disconnectIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                builder.addAction(
+                    Notification.Action.Builder(
+                        null,
+                        disconnectActionOverride
+                            ?: context.getString(R.string.notification_disconnect_action),
+                        disconnectPendingIntent,
+                    ).build(),
+                )
+            }
             if (body.isNotEmpty()) {
                 builder.setContentText(body)
             }

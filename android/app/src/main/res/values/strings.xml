@@ -5,4 +5,5 @@
     <string name="notification_channel_description">Shows when the VPN tunnel is up or down</string>
     <string name="notification_connected">VPN connected</string>
     <string name="notification_disconnected">VPN disconnected</string>
+    <string name="notification_disconnect_action">Disconnect</string>
 </resources>

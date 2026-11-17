@@ -35,17 +35,56 @@ class MainActivity : FlutterActivity() {
     private var storageChannel: MethodChannel? = null
     private var appsChannel: MethodChannel? = null
     private var pushChannel: MethodChannel? = null
+    private var exportChannel: MethodChannel? = null
     private var eventsChannel: EventChannel? = null
+    private var actionsChannel: EventChannel? = null
+    private var actionsSink: EventChannel.EventSink? = null
 
     private var activeEngine: ProtocolEngine? = null
     private lateinit var notifications: MouviNotifications
 
     private var pendingConnect: PendingConnect? = null
     private var pendingNotificationPermission: MethodChannel.Result? = null
+    private var pendingExport: PendingExport? = null
+    private var pendingLaunchAction: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         notifications = MouviNotifications(applicationContext)
+        pendingLaunchAction = readLaunchAction(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val action = readLaunchAction(intent)
+        if (action != null) {
+            deliverLaunchAction(action)
+        }
+    }
+
+    /**
+     * Передаёт действие в Dart, если канал уже слушают.
+     *
+     * Иначе сохраняет его до подписки: Activity создаётся раньше, чем
+     * Flutter успевает подключить EventChannel.
+     */
+    private fun deliverLaunchAction(action: String) {
+        val sink = actionsSink
+        if (sink != null) {
+            pendingLaunchAction = null
+            sink.success(action)
+        } else {
+            pendingLaunchAction = action
+        }
+    }
+
+    private fun readLaunchAction(intent: Intent?): String? {
+        return if (intent?.getBooleanExtra(EXTRA_QUICK_TOGGLE, false) == true) {
+            "toggle"
+        } else {
+            null
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -59,9 +98,15 @@ class MainActivity : FlutterActivity() {
                     "connect" -> handleConnect(call, result)
                     "disconnect" -> handleDisconnect(result)
                     "getState" -> ioExecutor.execute {
-                        val snapshot = currentSnapshot()
+                        val snapshot = EngineControl.snapshot(applicationContext)
                         runOnUiThread { result.success(snapshot) }
                     }
+                    "getLaunchAction" -> {
+                        val action = pendingLaunchAction
+                        pendingLaunchAction = null
+                        result.success(action)
+                    }
+                    "hasVpnPermission" -> result.success(VpnService.prepare(this) == null)
                     "openVpnSettings" -> openVpnSettings(result)
                     else -> result.notImplemented()
                 }
@@ -132,9 +177,20 @@ class MainActivity : FlutterActivity() {
                             protocol = call.argument<String>("protocol"),
                             titleOverride = call.argument<String>("title"),
                             textOverride = call.argument<String>("text"),
+                            disconnectActionOverride =
+                                call.argument<String>("disconnectAction"),
                         )
                         result.success(null)
                     }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+
+        exportChannel = MethodChannel(messenger, "mouvi/export").also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "saveConfig" -> saveConfigToFile(call, result)
                     else -> result.notImplemented()
                 }
             }
@@ -145,10 +201,10 @@ class MainActivity : FlutterActivity() {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                     // Слушаем оба движка: после пересоздания Activity заранее
                     // неизвестно, какой протокол сейчас подключён.
-                    allEngines().forEach { engine ->
+                    EngineControl.allEngines(applicationContext).forEach { engine ->
                         engine.setStateListener {
                             ioExecutor.execute {
-                                val snapshot = currentSnapshot()
+                                val snapshot = EngineControl.snapshot(applicationContext)
                                 runOnUiThread { events?.success(snapshot) }
                             }
                         }
@@ -156,67 +212,34 @@ class MainActivity : FlutterActivity() {
                     // Начальный снимок читаем вне UI-потока: GoBackend.getState
                     // может ждать привязки VpnService.
                     ioExecutor.execute {
-                        val snapshot = currentSnapshot()
+                        val snapshot = EngineControl.snapshot(applicationContext)
                         runOnUiThread { events?.success(snapshot) }
                     }
                 }
 
                 override fun onCancel(arguments: Any?) {
-                    allEngines().forEach { it.setStateListener(null) }
+                    EngineControl.allEngines(applicationContext)
+                        .forEach { it.setStateListener(null) }
                 }
             })
         }
-    }
 
-    private fun defaultStateMap(): Map<String, Any?> {
-        return mapOf(
-            "status" to "down",
-            "tunnelName" to WireGuardEngine.TUNNEL_NAME,
-            "alwaysOn" to false,
-            "lockdown" to false,
-        )
-    }
-
-    private fun allEngines(): List<ProtocolEngine> = listOf(
-        WireGuardEngine.get(applicationContext),
-        AmneziaWgEngine.get(applicationContext),
-    )
-
-    /**
-     * Реальное состояние любого движка.
-     *
-     * После пересоздания Activity `activeEngine` пуст, поэтому состояние
-     * нельзя хранить только в поле Activity — иначе UI покажет «отключено»
-     * при работающем туннеле и не сможет его закрыть.
-     */
-    private fun currentSnapshot(): Map<String, Any?> {
-        for (engine in allEngines()) {
-            val snapshot = engine.getState()
-            if (snapshot["status"] == "up") {
-                return snapshot
-            }
-        }
-        return defaultStateMap()
-    }
-
-    /** Опускает оба движка: активным может быть любой из них. */
-    private fun disconnectAllEngines(onComplete: (VpnResult.Failure?) -> Unit) {
-        val engines = allEngines()
-        var firstFailure: VpnResult.Failure? = null
-
-        fun step(index: Int) {
-            if (index >= engines.size) {
-                onComplete(firstFailure)
-                return
-            }
-            engines[index].disconnect { outcome ->
-                if (outcome is VpnResult.Failure && firstFailure == null) {
-                    firstFailure = outcome
+        actionsChannel = EventChannel(messenger, "mouvi/actions").also { channel ->
+            channel.setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    actionsSink = events
+                    val pending = pendingLaunchAction
+                    if (pending != null) {
+                        pendingLaunchAction = null
+                        events?.success(pending)
+                    }
                 }
-                step(index + 1)
-            }
+
+                override fun onCancel(arguments: Any?) {
+                    actionsSink = null
+                }
+            })
         }
-        step(0)
     }
 
     private fun handleConnect(call: MethodCall, result: MethodChannel.Result) {
@@ -244,6 +267,9 @@ class MainActivity : FlutterActivity() {
             protocol = protocol,
             content = content,
             excludedApplications = call.argument<List<*>>("excludedApplications")
+                ?.mapNotNull { it as? String }
+                ?: emptyList(),
+            includedApplications = call.argument<List<*>>("includedApplications")
                 ?.mapNotNull { it as? String }
                 ?: emptyList(),
             dnsProtection = call.argument<Boolean>("dnsProtection") ?: true,
@@ -278,7 +304,7 @@ class MainActivity : FlutterActivity() {
         // Android разрешает только один активный VPN. Если туннель уже
         // поднят (например, после пересоздания Activity), сначала опускаем
         // его, иначе новый движок не сможет занять VpnService.
-        disconnectAllEngines {
+        EngineControl.disconnectAll(applicationContext) {
             engine.connect(request) { outcome ->
                 when (outcome) {
                     is VpnResult.Success -> result.success(outcome.value)
@@ -289,13 +315,47 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleDisconnect(result: MethodChannel.Result) {
-        disconnectAllEngines { failure ->
+        EngineControl.disconnectAll(applicationContext) { failure ->
             activeEngine = null
             if (failure == null) {
                 result.success(null)
             } else {
                 result.error(failure.code, failure.message, null)
             }
+        }
+    }
+
+    private fun saveConfigToFile(call: MethodCall, result: MethodChannel.Result) {
+        if (pendingExport != null) {
+            result.error("busy", "Another export is already in progress", null)
+            return
+        }
+        val content = call.argument<String>("content")
+        if (content.isNullOrEmpty()) {
+            result.error("invalid_data", "Config content is empty", null)
+            return
+        }
+        val rawName = call.argument<String>("fileName") ?: "mouvi.conf"
+        val fileName = rawName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "mouvi.conf" }
+        // text/plain заставляет DocumentsUI дописывать .txt, поэтому для
+        // профилей используем octet-stream, а JSON — application/json.
+        val mimeType = when {
+            fileName.endsWith(".json", ignoreCase = true) -> "application/json"
+            fileName.endsWith(".conf", ignoreCase = true) -> "application/octet-stream"
+            fileName.endsWith(".ovpn", ignoreCase = true) -> "application/octet-stream"
+            else -> "text/plain"
+        }
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mimeType
+            putExtra(Intent.EXTRA_TITLE, fileName)
+        }
+        pendingExport = PendingExport(result, content)
+        try {
+            startActivityForResult(intent, REQUEST_EXPORT)
+        } catch (error: Throwable) {
+            pendingExport = null
+            result.error("native_unavailable", error.message ?: "No document picker", null)
         }
     }
 
@@ -337,6 +397,35 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_EXPORT) {
+            val pending = pendingExport
+            pendingExport = null
+            if (pending == null) {
+                return
+            }
+            val uri = data?.data
+            if (resultCode != Activity.RESULT_OK || uri == null) {
+                pending.result.success(false)
+                return
+            }
+            ioExecutor.execute {
+                val saved = try {
+                    contentResolver.openOutputStream(uri)?.use { stream ->
+                        stream.write(pending.content.toByteArray(Charsets.UTF_8))
+                    } != null
+                } catch (_: Throwable) {
+                    false
+                }
+                runOnUiThread {
+                    if (saved) {
+                        pending.result.success(true)
+                    } else {
+                        pending.result.error("export_failed", "Could not write the file", null)
+                    }
+                }
+            }
+            return
+        }
         if (requestCode != REQUEST_VPN_PERMISSION) {
             return
         }
@@ -400,17 +489,24 @@ class MainActivity : FlutterActivity() {
         pendingConnect = null
         pendingNotificationPermission?.success(false)
         pendingNotificationPermission = null
-        allEngines().forEach { it.setStateListener(null) }
+        pendingExport?.result?.error("native_unavailable", "Activity destroyed before export", null)
+        pendingExport = null
+        EngineControl.allEngines(applicationContext).forEach { it.setStateListener(null) }
         vpnChannel?.setMethodCallHandler(null)
         storageChannel?.setMethodCallHandler(null)
         appsChannel?.setMethodCallHandler(null)
         pushChannel?.setMethodCallHandler(null)
+        exportChannel?.setMethodCallHandler(null)
         eventsChannel?.setStreamHandler(null)
+        actionsChannel?.setStreamHandler(null)
         vpnChannel = null
         storageChannel = null
         appsChannel = null
         pushChannel = null
+        exportChannel = null
         eventsChannel = null
+        actionsChannel = null
+        actionsSink = null
         super.onDestroy()
     }
 
@@ -419,9 +515,17 @@ class MainActivity : FlutterActivity() {
         val result: MethodChannel.Result,
     )
 
+    private data class PendingExport(
+        val result: MethodChannel.Result,
+        val content: String,
+    )
+
     companion object {
+        const val EXTRA_QUICK_TOGGLE = "com.bitplugg.vpn_client.extra.QUICK_TOGGLE"
+
         private const val REQUEST_VPN_PERMISSION = 4101
         private const val REQUEST_NOTIFICATIONS = 4102
+        private const val REQUEST_EXPORT = 4103
 
         private val ioExecutor = Executors.newCachedThreadPool { runnable ->
             Thread(runnable, "mouvi-io").apply { isDaemon = true }

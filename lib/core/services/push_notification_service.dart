@@ -54,6 +54,7 @@ class PushNotificationService {
     String? protocol,
     String? title,
     String? text,
+    String? disconnectAction,
   }) async {
     try {
       await _channel.invokeMethod<void>('notify', <String, dynamic>{
@@ -62,6 +63,7 @@ class PushNotificationService {
         'protocol': protocol,
         'title': title,
         'text': text,
+        'disconnectAction': disconnectAction,
       });
     } on MissingPluginException {
       // Уведомления не должны ломать подключение.

@@ -9,6 +9,8 @@ title: Mouvi
 
 Быстрый, лёгкий и современный клиент с поддержкой WireGuard и AmneziaWG, разделением туннелирования, защитой DNS и Material You 3 дизайном.
 
+Поддерживаются импорт из файла, буфера обмена и QR-кода, экспорт конфига, статистика трафика и рукопожатий, плитка Quick Settings и кнопка отключения в уведомлении.
+
 [![Android Build](https://github.com/bitplugg/mouvi/actions/workflows/android_build.yml/badge.svg)](https://github.com/bitplugg/mouvi/actions/workflows/android_build.yml)
 
 ---
@@ -42,13 +44,15 @@ title: Mouvi
 
 ### Установка
 
-1. Скачайте APK из [GitHub Releases](https://github.com/bitplugg/mouvi/releases/latest)
+1. Скачайте APK из [GitHub Releases](https://github.com/bitplugg/mouvi/releases/latest): `arm64-v8a` для большинства современных устройств или `armeabi-v7a` для старых
 2. Установите APK
 3. Разрешите VPN-права в настройках
 4. Импортируйте WireGuard/AmneziaWG/WARP-конфигурацию
 5. Подключитесь
 
 OpenVPN, Shadowsocks, VLESS и Trojan пока импортируются без подключения.
+
+> Если у вас установлена версия 1.0.0 (debug-подпись), её нужно один раз удалить перед установкой 1.1.0: Android не разрешает обновление другим ключом. Перед удалением экспортируйте нужные конфигурации.
 
 ---
 
@@ -75,9 +79,11 @@ OpenVPN, Shadowsocks, VLESS и Trojan пока импортируются без
 
 ## 🗺 Roadmap
 
-- [ ] Split tunneling UI
-- [ ] DNS protection UI
-- [ ] Push-уведомления (FCM)
+- [x] Split tunneling UI (выключен / мимо VPN / только выбранные)
+- [x] DNS protection UI
+- [x] Локальные уведомления о состоянии соединения
+- [x] Плитка Quick Settings и кнопка «Отключить» в уведомлении
+- [x] Импорт из буфера обмена и QR-кода, экспорт конфига
 - [ ] OpenVPN-движок
 - [ ] Trojan / VLESS / Shadowsocks движки
 - [ ] Поддержка iOS

@@ -57,7 +57,13 @@ class AmneziaWgEngine private constructor(context: Context) : ProtocolEngine {
     override fun connect(request: VpnConnectRequest, callback: (VpnResult<String>) -> Unit) {
         executor.execute {
             val result = try {
-                val runtimeConfig = injectRuntimeOptions(request)
+                val runtimeConfig = RuntimeConfigAugmenter.augment(
+                    content = request.content,
+                    dnsProtection = request.dnsProtection,
+                    excludedApplications = request.excludedApplications,
+                    includedApplications = request.includedApplications,
+                    applyWarpDefaults = false,
+                )
                 val config = Config.parse(
                     ByteArrayInputStream(runtimeConfig.toByteArray(Charsets.UTF_8))
                 )
@@ -107,13 +113,46 @@ class AmneziaWgEngine private constructor(context: Context) : ProtocolEngine {
         } catch (_: Throwable) {
             false
         }
+        val statistics = if (isUp && activeBackend != null) {
+            statisticsMap(activeBackend)
+        } else {
+            emptyStatisticsMap()
+        }
         return mapOf(
             "status" to if (isUp) "up" else "down",
             "tunnelName" to TUNNEL_NAME,
             "alwaysOn" to false,
             "lockdown" to false,
-        )
+        ) + statistics
     }
+
+    /** Трафик и время последнего рукопожатия из нативного бэкенда. */
+    private fun statisticsMap(activeBackend: GoBackend): Map<String, Any?> {
+        return try {
+            val stats = activeBackend.getStatistics(tunnel)
+            var lastHandshake = 0L
+            for (key in stats.peers()) {
+                val peer = stats.peer(key) ?: continue
+                lastHandshake = maxOf(
+                    lastHandshake,
+                    peer.latestHandshakeEpochMillis(),
+                )
+            }
+            mapOf(
+                "rxBytes" to stats.totalRx(),
+                "txBytes" to stats.totalTx(),
+                "lastHandshakeMs" to lastHandshake,
+            )
+        } catch (_: Throwable) {
+            emptyStatisticsMap()
+        }
+    }
+
+    private fun emptyStatisticsMap(): Map<String, Any?> = mapOf(
+        "rxBytes" to 0L,
+        "txBytes" to 0L,
+        "lastHandshakeMs" to 0L,
+    )
 
     override fun currentStateMap(): Map<String, Any?> = getState()
 
@@ -132,82 +171,8 @@ class AmneziaWgEngine private constructor(context: Context) : ProtocolEngine {
         return VpnResult.Failure(code, error.reason.name)
     }
 
-    /**
-     * Добавляет к конфигу параметры, выбранные в приложении:
-     * исключённые приложения (реальный split tunneling) и защищённый DNS,
-     * если в конфиге DNS не задан.
-     */
-    private fun injectRuntimeOptions(request: VpnConnectRequest): String {
-        val lines = request.content.trim().removePrefix("\uFEFF").lines().toMutableList()
-        val interfaceStart = lines.indexOfFirst { it.trim().equals("[Interface]", ignoreCase = true) }
-        if (interfaceStart < 0) {
-            // Config.parse ниже вернёт понятную ошибку.
-            return request.content
-        }
-        var interfaceEnd = lines.size
-        var dnsLineIndex = -1
-        var hasDnsValue = false
-        var excludedLineIndex = -1
-        val existingExcluded = LinkedHashSet<String>()
-        for (index in interfaceStart + 1 until lines.size) {
-            val line = lines[index].trim()
-            if (line.startsWith("[") && line.endsWith("]")) {
-                interfaceEnd = index
-                break
-            }
-            val key = line.substringBefore('=').trim().lowercase()
-            val value = line.substringAfter('=').trim()
-            when {
-                key.equals("dns", ignoreCase = true) -> {
-                    dnsLineIndex = index
-                    if (value.isNotEmpty()) {
-                        hasDnsValue = true
-                    }
-                }
-                key.equals("excludedapplications", ignoreCase = true) -> {
-                    excludedLineIndex = index
-                    value.split(',')
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .forEach { existingExcluded.add(it) }
-                }
-            }
-        }
-        val additions = mutableListOf<String>()
-        if (request.dnsProtection && !hasDnsValue) {
-            val dnsLine = "DNS = 1.1.1.1, 1.0.0.1"
-            if (dnsLineIndex >= 0) {
-                lines[dnsLineIndex] = dnsLine
-            } else {
-                additions.add(dnsLine)
-            }
-        }
-        val selectedExcluded = request.excludedApplications
-            .asSequence()
-            .map { it.trim() }
-            .filter { PACKAGE_PATTERN.matches(it) }
-            .toList()
-        if (selectedExcluded.isNotEmpty() || existingExcluded.isNotEmpty()) {
-            val merged = LinkedHashSet<String>()
-            merged.addAll(existingExcluded)
-            merged.addAll(selectedExcluded)
-            val excludedLine = "ExcludedApplications = ${merged.joinToString(", ")}"
-            if (excludedLineIndex >= 0) {
-                lines[excludedLineIndex] = excludedLine
-            } else {
-                additions.add(excludedLine)
-            }
-        }
-        if (additions.isNotEmpty()) {
-            lines.addAll(interfaceEnd, additions)
-        }
-        return lines.joinToString("\n")
-    }
-
     companion object {
         const val TUNNEL_NAME = "mouvi-amneziawg"
-
-        private val PACKAGE_PATTERN = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
 
         @Volatile
         private var instance: AmneziaWgEngine? = null
