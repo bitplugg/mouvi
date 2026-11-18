@@ -178,12 +178,8 @@ jobs:
       - name: Write signing properties
         if: env.KEYSTORE_BASE64 != ''
         run: |
-          cat > android/key.properties <<'KEYEOF'
-          storeFile=mouvi-release.jks
-          storePassword=$KEYSTORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          KEYEOF
+          printf 'storeFile=mouvi-release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/key.properties
 
       - name: Build release APKs (split per ABI, with retries)
         run: |
