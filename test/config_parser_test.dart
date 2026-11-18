@@ -199,12 +199,39 @@ PublicKey = $_warpPublicKey
       expect(invalid.isValid, isFalse);
     });
 
-    test('validates VLESS URI', () {
+    test('validates VLESS Reality URI as supported', () {
       final result = validateConfig(
-        'vless://uuid@vpn.example.com:443?security=reality#node',
+        'vless://uuid@vpn.example.com:443?security=reality&type=tcp'
+        '&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+        '&sid=abcdef0123456789&sni=vpn.example.com#node',
       );
       expect(result.isValid, isTrue);
-      expect(result.engineSupported, isFalse);
+      expect(result.protocol, VpnProtocolType.vless);
+      expect(result.engineSupported, isTrue);
+      expect(result.warnings, isEmpty);
+    });
+
+    test('validates VLESS TLS WebSocket URI', () {
+      final result = validateConfig(
+        'vless://uuid@vpn.example.com:443?security=tls&type=ws&path=%2Fws',
+      );
+      expect(result.isValid, isTrue);
+      expect(result.engineSupported, isTrue);
+    });
+
+    test('rejects VLESS with unsupported transport', () {
+      final result = validateConfig(
+        'vless://uuid@vpn.example.com:443?security=tls&type=grpc',
+      );
+      expect(result.isValid, isFalse);
+      expect(result.errors, contains('invalidConfigFormat'));
+    });
+
+    test('rejects VLESS Reality without public key', () {
+      final result = validateConfig(
+        'vless://uuid@vpn.example.com:443?security=reality&type=tcp',
+      );
+      expect(result.isValid, isFalse);
     });
   });
 
@@ -225,6 +252,13 @@ AllowedIPs = ::/0
 Endpoint = [2001:db8::1]:51820
 ''';
       expect(suggestConfigName(config), '2001:db8::1');
+    });
+
+    test('uses VLESS fragment when present', () {
+      expect(
+        suggestConfigName('vless://uuid@vpn.example.com:443#My%20VLESS'),
+        'My VLESS',
+      );
     });
 
     test('uses JSON remarks', () {
@@ -289,13 +323,19 @@ Endpoint = [2001:db8::1]:51820
       expect(config.toString(), isNot(contains('supersecret')));
     });
 
-    test('engine support covers WireGuard and AmneziaWG', () {
-      expect(VpnProtocolType.wireguard.engineSupported, isTrue);
-      expect(VpnProtocolType.amneziawg.engineSupported, isTrue);
+    test('engine support covers WireGuard, AmneziaWG and VLESS', () {
+      for (final protocol in const <VpnProtocolType>[
+        VpnProtocolType.wireguard,
+        VpnProtocolType.amneziawg,
+        VpnProtocolType.vless,
+      ]) {
+        expect(protocol.engineSupported, isTrue, reason: protocol.name);
+      }
       for (final protocol in VpnProtocolType.values.where(
         (item) =>
             item != VpnProtocolType.wireguard &&
-            item != VpnProtocolType.amneziawg,
+            item != VpnProtocolType.amneziawg &&
+            item != VpnProtocolType.vless,
       )) {
         expect(protocol.engineSupported, isFalse, reason: protocol.name);
       }

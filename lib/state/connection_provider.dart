@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
@@ -29,6 +30,7 @@ class VpnConnectionState {
     this.rxBytes = 0,
     this.txBytes = 0,
     this.lastHandshakeMs = 0,
+    this.reconnectAttempt = 0,
   });
 
   final VpnConnectionStatus status;
@@ -45,6 +47,9 @@ class VpnConnectionState {
   final String? errorCode;
   final String? errorDetails;
 
+  /// Номер текущей попытки автопереподключения (0 = не выполняется).
+  final int reconnectAttempt;
+
   bool get isBusy =>
       status == VpnConnectionStatus.connecting ||
       status == VpnConnectionStatus.disconnecting;
@@ -60,6 +65,7 @@ class VpnConnectionState {
     int? rxBytes,
     int? txBytes,
     int? lastHandshakeMs,
+    int? reconnectAttempt,
   }) {
     return VpnConnectionState(
       status: status ?? this.status,
@@ -70,6 +76,7 @@ class VpnConnectionState {
       rxBytes: rxBytes ?? this.rxBytes,
       txBytes: txBytes ?? this.txBytes,
       lastHandshakeMs: lastHandshakeMs ?? this.lastHandshakeMs,
+      reconnectAttempt: reconnectAttempt ?? this.reconnectAttempt,
     );
   }
 }
@@ -79,17 +86,25 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
   static const String _connectedAtPrefsKey = 'mouvi.connected_at_ms';
 
   StreamSubscription<VpnStateSnapshot>? _nativeSubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   Timer? _statsTimer;
+  Timer? _reconnectTimer;
   String? _activeConfigId;
   bool _autoConnectTried = false;
   bool _autoConnectInFlight = false;
+  bool _connectCancelRequested = false;
+  bool _userInitiatedDisconnect = false;
+  int _connectGeneration = 0;
 
   @override
   VpnConnectionState build() {
     ref.onDispose(() {
       _statsTimer?.cancel();
       _statsTimer = null;
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
       unawaited(_nativeSubscription?.cancel());
+      unawaited(_connectivitySubscription?.cancel());
     });
     _nativeSubscription = ref
         .read(vpnEngineProvider)
@@ -101,6 +116,9 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
             // обновляться по результатам connect/disconnect.
           },
         );
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+      _onConnectivityChanged,
+    );
     ref.listen<List<VpnConfig>>(savedConfigsProvider, (previous, next) {
       if (!ref.mounted) {
         return;
@@ -124,10 +142,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     return const VpnConnectionState();
   }
 
-  /// Автоподключение при запуске.
-  ///
-  /// Срабатывает один раз за процесс и только если разрешение VPN уже
-  /// выдано: иначе приложение неожиданно показывало бы системный диалог.
   Future<void> _maybeAutoConnect() async {
     if (_autoConnectTried || _autoConnectInFlight || !ref.mounted) {
       return;
@@ -142,10 +156,13 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     }
     final config = state.activeConfig;
     if (config == null) {
-      // Конфиги ещё загружаются — попробуем после обновления списка.
       return;
     }
     if (!config.protocol.engineSupported) {
+      _autoConnectTried = true;
+      return;
+    }
+    if (settings.wifiOnly && !await _isWifiAvailable()) {
       _autoConnectTried = true;
       return;
     }
@@ -179,7 +196,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       return;
     }
     if (state.activeConfig != null) {
-      // Пользователь уже выбрал сервер, пока шло восстановление.
       return;
     }
     _activeConfigId = storedId;
@@ -188,8 +204,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       state = VpnConnectionState(
         status: VpnConnectionStatus.connected,
         activeConfig: config,
-        // После пересоздания Activity туннель остаётся поднятым, поэтому
-        // берём сохранённое время старта, чтобы uptime не сбрасывался.
         connectedAt: storedConnectedAt ?? DateTime.now(),
         rxBytes: snapshot.rxBytes,
         txBytes: snapshot.txBytes,
@@ -197,7 +211,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       );
       _startStatsPolling();
     } else if (config != null) {
-      // Туннель не поднят, но последний выбранный сервер сохраняем.
       state = VpnConnectionState(
         status: VpnConnectionStatus.disconnected,
         activeConfig: config,
@@ -226,7 +239,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       return null;
     }
     final value = DateTime.fromMillisecondsSinceEpoch(millis);
-    // Отбрасываем явно некорректное время (например, часы перевели назад).
     if (value.isAfter(DateTime.now().add(const Duration(minutes: 1)))) {
       return null;
     }
@@ -264,10 +276,26 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     return ref.read(savedConfigsProvider.notifier).findById(id);
   }
 
-  /// Подключиться к выбранному серверу.
-  ///
-  /// Повторные нажатия во время подключения/отключения игнорируются.
-  Future<void> connect(VpnConfig config) async {
+  Future<bool> _isWifiAvailable() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return results.contains(ConnectivityResult.wifi) ||
+          results.contains(ConnectivityResult.ethernet);
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<bool> _hasAnyNetwork() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return results.any((result) => result != ConnectivityResult.none);
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> connect(VpnConfig config, {bool isReconnect = false}) async {
     if (state.isBusy) {
       return;
     }
@@ -283,8 +311,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       );
       return;
     }
-    // Конфиг мог быть сохранён до ужесточения проверок или изменён вручную.
-    // Не отдаём заведомо нерабочий конфиг нативному движку.
     if (!validateConfig(config.content).isValid) {
       state = VpnConnectionState(
         status: VpnConnectionStatus.error,
@@ -293,23 +319,47 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       );
       return;
     }
+    final settings = ref.read(vpnSettingsProvider);
+    if (settings.wifiOnly && !await _isWifiAvailable()) {
+      state = VpnConnectionState(
+        status: VpnConnectionStatus.error,
+        activeConfig: config,
+        errorCode: VpnEngineException.wifiOnly,
+      );
+      return;
+    }
+    if (!await _hasAnyNetwork()) {
+      state = VpnConnectionState(
+        status: VpnConnectionStatus.error,
+        activeConfig: config,
+        errorCode: VpnEngineException.networkUnavailable,
+      );
+      return;
+    }
+
     if (state.status == VpnConnectionStatus.connected) {
-      await _disconnectInternal(notify: false);
+      await _disconnectInternal(notify: false, userInitiated: false);
       if (!ref.mounted) {
         return;
       }
     }
 
-    final settings = ref.read(vpnSettingsProvider);
+    _cancelReconnectTimer();
+    _userInitiatedDisconnect = false;
+    _connectCancelRequested = false;
+    final generation = ++_connectGeneration;
+
     final excluded = settings.splitMode == SplitTunnelingMode.exclude
         ? settings.selectedApplications
         : const <String>[];
     final included = settings.splitMode == SplitTunnelingMode.include
         ? settings.selectedApplications
         : const <String>[];
+
     state = VpnConnectionState(
       status: VpnConnectionStatus.connecting,
       activeConfig: config,
+      reconnectAttempt: isReconnect ? state.reconnectAttempt : 0,
     );
     try {
       await ref
@@ -319,9 +369,21 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
             excludedApplications: excluded,
             includedApplications: included,
             dnsProtection: settings.dnsProtectionEnabled,
+            dnsServers: settings.dnsServersForEngine,
           )
-          .timeout(const Duration(minutes: 2));
-      if (!ref.mounted) {
+          .timeout(Duration(seconds: settings.connectTimeoutSeconds));
+      if (!ref.mounted || generation != _connectGeneration) {
+        return;
+      }
+      if (_connectCancelRequested) {
+        await ref.read(vpnEngineProvider).disconnect().catchError((_) {});
+        if (!ref.mounted) {
+          return;
+        }
+        state = VpnConnectionState(
+          status: VpnConnectionStatus.disconnected,
+          activeConfig: config,
+        );
         return;
       }
       _activeConfigId = config.id;
@@ -336,50 +398,173 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       _startStatsPolling();
       _notifyPush('connected', config);
     } on TimeoutException {
+      if (!ref.mounted || generation != _connectGeneration) {
+        return;
+      }
+      await ref.read(vpnEngineProvider).disconnect().catchError((_) {});
       if (!ref.mounted) {
         return;
       }
-      state = VpnConnectionState(
-        status: VpnConnectionStatus.error,
-        activeConfig: config,
-        errorCode: VpnEngineException.tunnelStartFailed,
+      if (_connectCancelRequested) {
+        state = VpnConnectionState(
+          status: VpnConnectionStatus.disconnected,
+          activeConfig: config,
+        );
+        return;
+      }
+      await _handleConnectFailure(
+        config,
+        VpnEngineException.connectionTimeout,
+        null,
       );
     } on VpnEngineException catch (error) {
-      if (!ref.mounted) {
+      if (!ref.mounted || generation != _connectGeneration) {
         return;
       }
-      state = VpnConnectionState(
-        status: VpnConnectionStatus.error,
-        activeConfig: config,
-        errorCode: error.code,
-        errorDetails: error.details,
-      );
+      if (_connectCancelRequested ||
+          error.code == VpnEngineException.connectionCancelled) {
+        state = VpnConnectionState(
+          status: VpnConnectionStatus.disconnected,
+          activeConfig: config,
+        );
+        return;
+      }
+      await _handleConnectFailure(config, error.code, error.details);
     } catch (error) {
-      if (!ref.mounted) {
+      if (!ref.mounted || generation != _connectGeneration) {
         return;
       }
-      state = VpnConnectionState(
-        status: VpnConnectionStatus.error,
-        activeConfig: config,
-        errorCode: VpnEngineException.unknown,
-        errorDetails: error.toString(),
+      if (_connectCancelRequested) {
+        state = VpnConnectionState(
+          status: VpnConnectionStatus.disconnected,
+          activeConfig: config,
+        );
+        return;
+      }
+      await _handleConnectFailure(
+        config,
+        VpnEngineException.unknown,
+        error.toString(),
       );
     }
+  }
+
+  Future<void> _handleConnectFailure(
+    VpnConfig config,
+    String code,
+    String? details,
+  ) async {
+    final settings = ref.read(vpnSettingsProvider);
+    final canRetry =
+        settings.autoReconnectEnabled &&
+        !_userInitiatedDisconnect &&
+        !_connectCancelRequested &&
+        code != VpnEngineException.vpnPermissionDenied &&
+        code != VpnEngineException.invalidConfig &&
+        code != VpnEngineException.unsupportedProtocol &&
+        code != VpnEngineException.wifiOnly;
+    if (canRetry &&
+        state.reconnectAttempt < settings.autoReconnectMaxAttempts) {
+      final nextAttempt = state.reconnectAttempt + 1;
+      state = VpnConnectionState(
+        status: VpnConnectionStatus.error,
+        activeConfig: config,
+        errorCode: code,
+        errorDetails: details,
+        reconnectAttempt: nextAttempt,
+      );
+      _scheduleReconnect(config, nextAttempt);
+      return;
+    }
+    state = VpnConnectionState(
+      status: VpnConnectionStatus.error,
+      activeConfig: config,
+      errorCode: code,
+      errorDetails: details,
+      reconnectAttempt: 0,
+    );
+  }
+
+  void _scheduleReconnect(VpnConfig config, int attempt) {
+    _reconnectTimer?.cancel();
+    final delaySeconds = (attempt * 2).clamp(2, 10);
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      unawaited(_runScheduledReconnect(config));
+    });
+  }
+
+  Future<void> _runScheduledReconnect(VpnConfig config) async {
+    if (!ref.mounted || _userInitiatedDisconnect) {
+      return;
+    }
+    final settings = ref.read(vpnSettingsProvider);
+    if (!settings.autoReconnectEnabled) {
+      return;
+    }
+    if (settings.wifiOnly && !await _isWifiAvailable()) {
+      return;
+    }
+    if (state.isBusy || state.status == VpnConnectionStatus.connected) {
+      return;
+    }
+    state = state.copyWith(
+      status: VpnConnectionStatus.connecting,
+      clearError: true,
+    );
+    await connect(config, isReconnect: true);
+  }
+
+  void _cancelReconnectTimer() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+  }
+
+  Future<void> cancelConnect() async {
+    if (state.status != VpnConnectionStatus.connecting) {
+      return;
+    }
+    _connectCancelRequested = true;
+    _userInitiatedDisconnect = true;
+    _cancelReconnectTimer();
+    _connectGeneration++;
+    try {
+      await ref.read(vpnEngineProvider).disconnect();
+    } catch (_) {}
+    if (!ref.mounted) {
+      return;
+    }
+    final config = state.activeConfig;
+    state = VpnConnectionState(
+      status: VpnConnectionStatus.disconnected,
+      activeConfig: config,
+    );
   }
 
   Future<void> disconnect() async {
-    if (state.status != VpnConnectionStatus.connected) {
+    _userInitiatedDisconnect = true;
+    _connectCancelRequested = true;
+    _cancelReconnectTimer();
+    if (state.status == VpnConnectionStatus.connecting) {
+      await cancelConnect();
       return;
     }
-    await _disconnectInternal(notify: true);
+    if (state.status != VpnConnectionStatus.connected) {
+      state = state.copyWith(reconnectAttempt: 0);
+      return;
+    }
+    await _disconnectInternal(notify: true, userInitiated: true);
   }
 
-  Future<void> _disconnectInternal({required bool notify}) async {
+  Future<void> _disconnectInternal({
+    required bool notify,
+    bool userInitiated = false,
+  }) async {
     final config = state.activeConfig;
     _stopStatsPolling();
     state = state.copyWith(
       status: VpnConnectionStatus.disconnecting,
       clearError: true,
+      reconnectAttempt: 0,
     );
     try {
       await ref
@@ -389,8 +574,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       if (!ref.mounted) {
         return;
       }
-      // Последний выбранный сервер оставляем, чтобы после перезапуска
-      // приложения он был выбран снова; сбрасываем только время старта.
       unawaited(_writeConnectedAt(null));
       state = VpnConnectionState(
         status: VpnConnectionStatus.disconnected,
@@ -431,18 +614,19 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     }
   }
 
-  /// Повторить подключение после ошибки.
   Future<void> retry() async {
     final config = state.activeConfig;
     if (config == null || state.isBusy) {
       return;
     }
+    _cancelReconnectTimer();
+    _userInitiatedDisconnect = false;
+    _connectCancelRequested = false;
     _stopStatsPolling();
-    state = const VpnConnectionState();
+    state = VpnConnectionState(activeConfig: config);
     await connect(config);
   }
 
-  /// Выбрать сервер без подключения (например, из списка).
   void selectConfig(VpnConfig config) {
     if (state.isBusy || state.status == VpnConnectionStatus.connected) {
       return;
@@ -456,11 +640,11 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     );
   }
 
-  /// Обработать открытие приложения из плитки Quick Settings.
-  ///
-  /// Возвращает `false`, если подключаться не к чему: вызывающая сторона
-  /// может показать список серверов.
   Future<bool> quickToggle() async {
+    if (state.status == VpnConnectionStatus.connecting) {
+      await cancelConnect();
+      return true;
+    }
     if (state.isBusy) {
       return true;
     }
@@ -481,11 +665,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     return true;
   }
 
-  /// Периодически обновлять статистику туннеля.
-  ///
-  /// Нативный слой присылает события только при смене состояния, а трафик
-  /// и время рукопожатия меняются постоянно. Опрос идёт только пока
-  /// туннель поднят и прекращается при отключении/ошибке.
   void _startStatsPolling() {
     _statsTimer ??= Timer.periodic(const Duration(seconds: 2), (_) {
       unawaited(_syncStats());
@@ -515,7 +694,6 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     );
   }
 
-  /// Реакция на реальные события из нативного слоя.
   void _onNativeState(VpnStateSnapshot snapshot) {
     if (!ref.mounted) {
       return;
@@ -539,27 +717,99 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       _startStatsPolling();
       return;
     }
-    // Туннель опущен. Пока идёт наш собственный connect/disconnect,
-    // итоговое состояние выставит соответствующий вызов.
     if (state.status != VpnConnectionStatus.connected) {
       return;
     }
     _stopStatsPolling();
     final config = state.activeConfig;
     unawaited(_writeConnectedAt(null));
-    state = VpnConnectionState(
-      status: VpnConnectionStatus.disconnected,
-      activeConfig: config,
-    );
+    final settings = ref.read(vpnSettingsProvider);
+    final shouldReconnect =
+        !_userInitiatedDisconnect &&
+        settings.autoReconnectEnabled &&
+        config != null;
+    if (shouldReconnect) {
+      final nextAttempt = 1;
+      state = VpnConnectionState(
+        status: VpnConnectionStatus.error,
+        activeConfig: config,
+        errorCode: VpnEngineException.tunnelStartFailed,
+        reconnectAttempt: nextAttempt,
+      );
+      _scheduleReconnect(config, nextAttempt);
+    } else {
+      state = VpnConnectionState(
+        status: VpnConnectionStatus.disconnected,
+        activeConfig: config,
+      );
+    }
     _notifyPush('disconnected', config);
+  }
+
+  void _onConnectivityChanged(List<ConnectivityResult> results) {
+    if (!ref.mounted) {
+      return;
+    }
+    final settings = ref.read(vpnSettingsProvider);
+    final hasNetwork = results.any(
+      (result) => result != ConnectivityResult.none,
+    );
+    final hasWifi =
+        results.contains(ConnectivityResult.wifi) ||
+        results.contains(ConnectivityResult.ethernet);
+
+    if (settings.wifiOnly && !hasWifi) {
+      if (state.status == VpnConnectionStatus.connecting) {
+        unawaited(cancelConnect());
+      } else if (state.status == VpnConnectionStatus.connected &&
+          !_userInitiatedDisconnect) {
+        unawaited(disconnect());
+      }
+      return;
+    }
+
+    if (!hasNetwork) {
+      return;
+    }
+
+    if (settings.reconnectOnNetworkChange &&
+        !_userInitiatedDisconnect &&
+        state.status == VpnConnectionStatus.connected) {
+      final config = state.activeConfig;
+      if (config != null) {
+        unawaited(_reconnectSameConfig(config));
+      }
+      return;
+    }
+
+    if (settings.autoReconnectEnabled &&
+        !_userInitiatedDisconnect &&
+        state.status == VpnConnectionStatus.error &&
+        state.reconnectAttempt > 0) {
+      final config = state.activeConfig;
+      if (config != null &&
+          state.reconnectAttempt < settings.autoReconnectMaxAttempts) {
+        _cancelReconnectTimer();
+        _scheduleReconnect(config, state.reconnectAttempt);
+      }
+    }
+  }
+
+  Future<void> _reconnectSameConfig(VpnConfig config) async {
+    if (state.isBusy) {
+      return;
+    }
+    await _disconnectInternal(notify: false, userInitiated: false);
+    if (!ref.mounted || _userInitiatedDisconnect) {
+      return;
+    }
+    await connect(config);
   }
 
   void _notifyPush(String type, VpnConfig? config) {
     if (!ref.read(pushNotificationsEnabledProvider)) {
       return;
     }
-    // Локальные уведомления локализуем так же, как интерфейс приложения,
-    // чтобы язык не зависел от системного.
     final localizations = AppLocalizations(ref.read(localeProvider));
     final title = localizations.t(
       type == 'connected' ? 'connected' : 'disconnected',

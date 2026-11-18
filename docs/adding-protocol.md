@@ -9,7 +9,7 @@ title: Добавление нового протокола
 
 ## Шаг 1: Создать класс движка
 
-Создать новый файл `android/app/src/main/kotlin/com/bitplugg/vpn_client/VlessEngine.kt`:
+Создать новый файл, например `android/app/src/main/kotlin/com/bitplugg/vpn_client/TrojanEngine.kt` (VLESS уже реализован как пример).
 
 ```kotlin
 package com.bitplugg.vpn_client
@@ -18,14 +18,14 @@ import android.content.Context
 import org.amnezia.awg.backend.GoBackend // или другой бэкенд
 import java.util.concurrent.Executors
 
-class VlessEngine private constructor(context: Context) : ProtocolEngine {
+class TrojanEngine private constructor(context: Context) : ProtocolEngine {
     // Реализовать connect, disconnect, getState, setStateListener
-    
+
     companion object {
-        @Volatile private var instance: VlessEngine? = null
-        fun get(context: Context): VlessEngine {
+        @Volatile private var instance: TrojanEngine? = null
+        fun get(context: Context): TrojanEngine {
             return instance ?: synchronized(this) {
-                instance ?: VlessEngine(context).also { instance = it }
+                instance ?: TrojanEngine(context).also { instance = it }
             }
         }
     }
@@ -40,7 +40,7 @@ class VlessEngine private constructor(context: Context) : ProtocolEngine {
 fun forProtocol(protocol: String, context: Context): ProtocolEngine? = when (protocol) {
     "wireguard" -> WireGuardEngine.get(context)
     "amneziawg" -> AmneziaWgEngine.get(context)
-    "vless" -> VlessEngine.get(context)   // ← новая строка
+    "trojan" -> TrojanEngine.get(context) // ← новая строка
     else -> null
 }
 ```

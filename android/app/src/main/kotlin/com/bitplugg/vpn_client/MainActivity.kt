@@ -261,6 +261,13 @@ class MainActivity : FlutterActivity() {
             result.error("invalid_config", "Empty configuration", null)
             return
         }
+        val dnsServers = call.argument<List<*>>("dnsServers")
+            ?.mapNotNull { it as? String }
+            ?: if (call.argument<Boolean>("dnsProtection") != false) {
+                listOf("1.1.1.1", "1.0.0.1")
+            } else {
+                emptyList()
+            }
         val request = VpnConnectRequest(
             configId = call.argument<String>("id") ?: "",
             name = call.argument<String>("name") ?: "",
@@ -272,7 +279,7 @@ class MainActivity : FlutterActivity() {
             includedApplications = call.argument<List<*>>("includedApplications")
                 ?.mapNotNull { it as? String }
                 ?: emptyList(),
-            dnsProtection = call.argument<Boolean>("dnsProtection") ?: true,
+            dnsServers = dnsServers,
         )
         val prepareIntent = try {
             VpnService.prepare(this)

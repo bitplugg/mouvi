@@ -26,13 +26,14 @@ object RuntimeConfigAugmenter {
 
     fun augment(
         content: String,
-        dnsProtection: Boolean,
+        dnsServers: List<String>,
         excludedApplications: List<String>,
         includedApplications: List<String>,
         applyWarpDefaults: Boolean,
     ): String {
         val selectedExcluded = sanitizePackages(excludedApplications)
         val selectedIncluded = sanitizePackages(includedApplications)
+        val effectiveDns = sanitizeDnsServers(dnsServers)
         val useInclude = selectedIncluded.isNotEmpty()
         val useExclude = !useInclude && selectedExcluded.isNotEmpty()
 
@@ -56,7 +57,7 @@ object RuntimeConfigAugmenter {
         val keptInterface = mutableListOf<String>()
         val existingExcluded = LinkedHashSet<String>()
         val existingIncluded = LinkedHashSet<String>()
-        var hasDnsValue = false
+        var dnsInserted = false
 
         for (index in interfaceStart + 1 until interfaceEnd) {
             val raw = lines[index]
@@ -69,13 +70,12 @@ object RuntimeConfigAugmenter {
             val value = line.substringAfter('=').trim()
             when {
                 key.equals("dns", ignoreCase = true) -> {
-                    if (value.isNotEmpty()) {
-                        hasDnsValue = true
-                        keptInterface.add(raw)
-                    } else if (dnsProtection) {
-                        keptInterface.add("DNS = $DEFAULT_DNS")
-                        hasDnsValue = true
-                    } else {
+                    if (effectiveDns.isNotEmpty()) {
+                        if (!dnsInserted) {
+                            keptInterface.add("DNS = ${effectiveDns.joinToString(", ")}")
+                            dnsInserted = true
+                        }
+                    } else if (value.isNotEmpty()) {
                         keptInterface.add(raw)
                     }
                 }
@@ -108,8 +108,8 @@ object RuntimeConfigAugmenter {
                 else -> keptInterface.add(raw)
             }
         }
-        if (dnsProtection && !hasDnsValue) {
-            keptInterface.add("DNS = $DEFAULT_DNS")
+        if (effectiveDns.isNotEmpty() && !dnsInserted) {
+            keptInterface.add("DNS = ${effectiveDns.joinToString(", ")}")
         }
         if (useExclude) {
             existingExcluded.addAll(selectedExcluded)
@@ -187,6 +187,13 @@ object RuntimeConfigAugmenter {
         packages.asSequence()
             .map { it.trim() }
             .filter { PACKAGE_PATTERN.matches(it) }
+            .distinct()
+            .toList()
+
+    private fun sanitizeDnsServers(servers: List<String>): List<String> =
+        servers.asSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
             .distinct()
             .toList()
 }

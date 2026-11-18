@@ -23,10 +23,10 @@ class RuntimeConfigAugmenterTest {
     }
 
     @Test
-    fun `adds default DNS when interface has none`() {
+    fun `adds provided DNS servers when interface has none`() {
         val result = RuntimeConfigAugmenter.augment(
             content = baseConfig(),
-            dnsProtection = true,
+            dnsServers = listOf("1.1.1.1", "1.0.0.1"),
             excludedApplications = emptyList(),
             includedApplications = emptyList(),
             applyWarpDefaults = false,
@@ -35,11 +35,11 @@ class RuntimeConfigAugmenterTest {
     }
 
     @Test
-    fun `keeps existing DNS and does not duplicate`() {
+    fun `keeps existing DNS when no servers provided`() {
         val config = baseConfig().replace("[Peer]", "DNS = 9.9.9.9\n[Peer]")
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = true,
+            dnsServers = emptyList(),
             excludedApplications = emptyList(),
             includedApplications = emptyList(),
             applyWarpDefaults = false,
@@ -49,11 +49,11 @@ class RuntimeConfigAugmenterTest {
     }
 
     @Test
-    fun `replaces empty DNS line`() {
-        val config = baseConfig().replace("[Peer]", "DNS =\n[Peer]")
+    fun `replaces DNS with provided servers`() {
+        val config = baseConfig().replace("[Peer]", "DNS = 9.9.9.9\n[Peer]")
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = true,
+            dnsServers = listOf("1.1.1.1", "1.0.0.1"),
             excludedApplications = emptyList(),
             includedApplications = emptyList(),
             applyWarpDefaults = false,
@@ -63,10 +63,10 @@ class RuntimeConfigAugmenterTest {
     }
 
     @Test
-    fun `respects disabled DNS protection`() {
+    fun `does not add DNS when no servers provided`() {
         val result = RuntimeConfigAugmenter.augment(
             content = baseConfig(),
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = emptyList(),
             includedApplications = emptyList(),
             applyWarpDefaults = false,
@@ -82,7 +82,7 @@ class RuntimeConfigAugmenterTest {
         )
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = listOf("com.example.app"),
             includedApplications = emptyList(),
             applyWarpDefaults = false,
@@ -100,7 +100,7 @@ class RuntimeConfigAugmenterTest {
         )
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = emptyList(),
             includedApplications = listOf("com.example.app"),
             applyWarpDefaults = false,
@@ -117,7 +117,7 @@ class RuntimeConfigAugmenterTest {
         )
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = listOf("com.example.app"),
             includedApplications = emptyList(),
             applyWarpDefaults = false,
@@ -130,7 +130,7 @@ class RuntimeConfigAugmenterTest {
     fun `invalid package names are ignored`() {
         val result = RuntimeConfigAugmenter.augment(
             content = baseConfig(),
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = listOf("not a package", "com.example.app"),
             includedApplications = emptyList(),
             applyWarpDefaults = false,
@@ -151,7 +151,7 @@ class RuntimeConfigAugmenterTest {
         """.trimIndent()
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = emptyList(),
             includedApplications = emptyList(),
             applyWarpDefaults = true,
@@ -172,7 +172,7 @@ class RuntimeConfigAugmenterTest {
         """.trimIndent()
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = emptyList(),
             includedApplications = emptyList(),
             applyWarpDefaults = true,
@@ -193,7 +193,7 @@ class RuntimeConfigAugmenterTest {
         """.trimIndent()
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = emptyList(),
             includedApplications = emptyList(),
             applyWarpDefaults = true,
@@ -208,7 +208,7 @@ class RuntimeConfigAugmenterTest {
             .replace("[Peer]", "H1 = 12345\nH2 = 23456\nH3 = 34567\nH4 = 45678\n[Peer]")
         val result = RuntimeConfigAugmenter.augment(
             content = config,
-            dnsProtection = false,
+            dnsServers = emptyList(),
             excludedApplications = emptyList(),
             includedApplications = emptyList(),
             applyWarpDefaults = false,
@@ -222,7 +222,7 @@ class RuntimeConfigAugmenterTest {
         val content = "garbage"
         val result = RuntimeConfigAugmenter.augment(
             content = content,
-            dnsProtection = true,
+            dnsServers = listOf("1.1.1.1"),
             excludedApplications = listOf("com.example.app"),
             includedApplications = emptyList(),
             applyWarpDefaults = true,

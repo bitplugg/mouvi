@@ -61,7 +61,7 @@ class VlessEngine private constructor(context: Context) : ProtocolEngine {
             <pre><code>fun forProtocol(protocol: String, context: Context): ProtocolEngine? = when (protocol) {
     "wireguard" -> WireGuardEngine.get(context)
     "amneziawg" -> AmneziaWgEngine.get(context)
-    "vless" -> VlessEngine.get(context)   // ← новая строка
+    "trojan" -> TrojanEngine.get(context) // ← новая строка
     else -> null
 }</code></pre>
 

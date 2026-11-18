@@ -200,9 +200,101 @@ ConfigValidationResult validateConfig(String content) {
         requireServer: true,
       );
     case VpnProtocolType.vless:
+      return _validateVless(trimmed);
     case VpnProtocolType.trojan:
       return _validateJsonOrUri(trimmed, protocol);
   }
+}
+
+/// Проверка VLESS-ссылки или v2ray-подобного JSON перед сохранением.
+///
+/// Движок Xray реально поддерживает TCP/WS с TLS или Reality, поэтому
+/// остальные транспорты отвергаются сразу, а не после неудачного подключения.
+ConfigValidationResult _validateVless(String content) {
+  final errors = <String>[];
+  if (content.startsWith('{')) {
+    try {
+      final decoded = jsonDecode(content);
+      if (decoded is! Map) {
+        errors.add('invalidConfigFormat');
+      } else {
+        final outbounds = decoded['outbounds'];
+        Object? outbound;
+        if (outbounds is List) {
+          for (final item in outbounds) {
+            if (item is Map &&
+                item['protocol']?.toString().toLowerCase() == 'vless') {
+              outbound = item;
+              break;
+            }
+          }
+        }
+        outbound ??= decoded['vless'] ?? decoded;
+        final settings = outbound is Map ? outbound['settings'] : null;
+        final vnext = settings is Map ? settings['vnext'] : null;
+        final first = vnext is List && vnext.isNotEmpty
+            ? vnext.first
+            : settings;
+        final users = first is Map ? first['users'] : null;
+        final user = users is List && users.isNotEmpty ? users.first : first;
+        final id = user is Map ? user['id']?.toString() : null;
+        final address = first is Map
+            ? (first['address'] ?? first['server'])?.toString()
+            : null;
+        final port = first is Map ? first['port'] : null;
+        if (id == null ||
+            id.isEmpty ||
+            address == null ||
+            address.isEmpty ||
+            port is! int ||
+            port < 1 ||
+            port > 65535) {
+          errors.add('invalidConfigFormat');
+        }
+      }
+    } on FormatException {
+      errors.add('invalidConfigFormat');
+    }
+    return ConfigValidationResult(
+      protocol: VpnProtocolType.vless,
+      errors: errors.toSet().toList(),
+    );
+  }
+
+  final uri = Uri.tryParse(content);
+  if (uri == null || uri.scheme.toLowerCase() != 'vless') {
+    return const ConfigValidationResult(
+      protocol: VpnProtocolType.vless,
+      errors: <String>['invalidConfigFormat'],
+    );
+  }
+  final uuid = uri.userInfo;
+  final host = uri.host;
+  final port = uri.port;
+  if (uuid.isEmpty || host.isEmpty || port < 1 || port > 65535) {
+    errors.add('invalidConfigFormat');
+  }
+  final security = (uri.queryParameters['security'] ?? 'none').toLowerCase();
+  final transport = (uri.queryParameters['type'] ?? 'tcp').toLowerCase();
+  if (!const <String>{'none', 'tls', 'reality'}.contains(security) ||
+      !const <String>{'tcp', 'ws'}.contains(transport)) {
+    errors.add('invalidConfigFormat');
+  }
+  if (security == 'reality') {
+    final params = uri.queryParameters;
+    final publicKey = params['pbk'] ?? '';
+    final shortId = params['sid'] ?? '';
+    final validKey = RegExp(r'^[A-Za-z0-9_-]{43,44}$').hasMatch(publicKey);
+    final validShortId =
+        shortId.isEmpty || RegExp(r'^([0-9a-fA-F]{2})+$').hasMatch(shortId);
+    if (!validKey || !validShortId || (params['sni'] ?? '').isEmpty) {
+      errors.add('invalidConfigFormat');
+    }
+  }
+  return ConfigValidationResult(
+    protocol: VpnProtocolType.vless,
+    errors: errors.toSet().toList(),
+  );
 }
 
 ConfigValidationResult _validateWireGuard(
@@ -401,6 +493,19 @@ String suggestConfigName(String content, {String fallback = 'Server'}) {
   final schemeIndex = lower.indexOf('://');
   if (schemeIndex >= 0) {
     final afterScheme = trimmed.substring(schemeIndex + 3);
+    final fragmentIndex = afterScheme.indexOf('#');
+    if (fragmentIndex >= 0) {
+      try {
+        final fragment = Uri.decodeComponent(
+          afterScheme.substring(fragmentIndex + 1),
+        );
+        if (fragment.trim().isNotEmpty) {
+          return fragment.trim();
+        }
+      } on FormatException {
+        // Битый fragment не должен мешать определить имя по хосту.
+      }
+    }
     final authority = afterScheme.split(RegExp(r'[/?#]')).first;
     final hostPart = authority.contains('@')
         ? authority.split('@').last

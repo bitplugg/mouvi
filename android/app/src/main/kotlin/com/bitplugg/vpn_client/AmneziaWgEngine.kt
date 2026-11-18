@@ -59,7 +59,7 @@ class AmneziaWgEngine private constructor(context: Context) : ProtocolEngine {
             val result = try {
                 val runtimeConfig = RuntimeConfigAugmenter.augment(
                     content = request.content,
-                    dnsProtection = request.dnsProtection,
+                    dnsServers = request.dnsServers,
                     excludedApplications = request.excludedApplications,
                     includedApplications = request.includedApplications,
                     applyWarpDefaults = false,

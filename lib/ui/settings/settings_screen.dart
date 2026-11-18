@@ -181,15 +181,173 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                 ],
                 const Divider(height: 1),
-                SwitchListTile(
-                  title: Text(localizations.t('dnsProtection')),
-                  subtitle: Text(localizations.t('dnsProtectionHint')),
-                  value: settings.dnsProtectionEnabled,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        localizations.t('dnsMode'),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<DnsMode>(
+                          segments: [
+                            ButtonSegment(
+                              value: DnsMode.system,
+                              label: Text(localizations.t('dnsModeSystem')),
+                            ),
+                            ButtonSegment(
+                              value: DnsMode.protected,
+                              label: Text(localizations.t('dnsModeProtected')),
+                            ),
+                            ButtonSegment(
+                              value: DnsMode.custom,
+                              label: Text(localizations.t('dnsModeCustom')),
+                            ),
+                          ],
+                          selected: <DnsMode>{settings.dnsMode},
+                          onSelectionChanged: (value) {
+                            unawaited(
+                              ref
+                                  .read(vpnSettingsProvider.notifier)
+                                  .updateDnsMode(value.first),
+                            );
+                          },
+                        ),
+                      ),
+                      if (settings.dnsMode == DnsMode.custom) ...[
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          key: ValueKey(
+                            'dns-${settings.dnsMode}-${settings.customDnsServers.isEmpty}',
+                          ),
+                          initialValue: settings.customDnsServers,
+                          decoration: InputDecoration(
+                            labelText: localizations.t('customDns'),
+                            hintText: localizations.t('customDnsHint'),
+                            border: const OutlineInputBorder(),
+                            helperText:
+                                settings.resolvedCustomDnsServers.isEmpty
+                                ? localizations.t('customDnsInvalid')
+                                : null,
+                          ),
+                          minLines: 1,
+                          maxLines: 3,
+                          onChanged: (value) {
+                            unawaited(
+                              ref
+                                  .read(vpnSettingsProvider.notifier)
+                                  .updateCustomDnsServers(value),
+                            );
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  title: Text(localizations.t('connectTimeout')),
+                  subtitle: Text(localizations.t('connectTimeoutHint')),
+                  trailing: Text(
+                    '${settings.connectTimeoutSeconds}${localizations.t('secondsValue')}',
+                  ),
+                ),
+                Slider(
+                  value: settings.connectTimeoutSeconds.toDouble(),
+                  min: VpnSettings.minConnectTimeoutSeconds.toDouble(),
+                  max: VpnSettings.maxConnectTimeoutSeconds.toDouble(),
+                  divisions:
+                      VpnSettings.maxConnectTimeoutSeconds -
+                      VpnSettings.minConnectTimeoutSeconds,
+                  label:
+                      '${settings.connectTimeoutSeconds}${localizations.t('secondsValue')}',
                   onChanged: (value) {
                     unawaited(
                       ref
                           .read(vpnSettingsProvider.notifier)
-                          .updateDnsProtectionEnabled(value),
+                          .updateConnectTimeoutSeconds(value.round()),
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  title: Text(localizations.t('autoReconnect')),
+                  subtitle: Text(localizations.t('autoReconnectHint')),
+                  value: settings.autoReconnectEnabled,
+                  onChanged: (value) {
+                    unawaited(
+                      ref
+                          .read(vpnSettingsProvider.notifier)
+                          .updateAutoReconnectEnabled(value),
+                    );
+                  },
+                ),
+                if (settings.autoReconnectEnabled)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${localizations.t('reconnectAttempts')}: ${settings.autoReconnectMaxAttempts}',
+                          ),
+                        ),
+                        IconButton(
+                          onPressed:
+                              settings.autoReconnectMaxAttempts >
+                                  VpnSettings.minReconnectAttempts
+                              ? () => ref
+                                    .read(vpnSettingsProvider.notifier)
+                                    .updateAutoReconnectMaxAttempts(
+                                      settings.autoReconnectMaxAttempts - 1,
+                                    )
+                              : null,
+                          icon: const Icon(Icons.remove_circle_outline),
+                        ),
+                        IconButton(
+                          onPressed:
+                              settings.autoReconnectMaxAttempts <
+                                  VpnSettings.maxReconnectAttempts
+                              ? () => ref
+                                    .read(vpnSettingsProvider.notifier)
+                                    .updateAutoReconnectMaxAttempts(
+                                      settings.autoReconnectMaxAttempts + 1,
+                                    )
+                              : null,
+                          icon: const Icon(Icons.add_circle_outline),
+                        ),
+                      ],
+                    ),
+                  ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  title: Text(localizations.t('reconnectOnNetworkChange')),
+                  subtitle: Text(
+                    localizations.t('reconnectOnNetworkChangeHint'),
+                  ),
+                  value: settings.reconnectOnNetworkChange,
+                  onChanged: (value) {
+                    unawaited(
+                      ref
+                          .read(vpnSettingsProvider.notifier)
+                          .updateReconnectOnNetworkChange(value),
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  title: Text(localizations.t('wifiOnly')),
+                  subtitle: Text(localizations.t('wifiOnlyHint')),
+                  value: settings.wifiOnly,
+                  onChanged: (value) {
+                    unawaited(
+                      ref
+                          .read(vpnSettingsProvider.notifier)
+                          .updateWifiOnly(value),
                     );
                   },
                 ),

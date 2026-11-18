@@ -13,7 +13,8 @@ object ProtocolEngineFactory {
     fun forProtocol(protocol: String, context: Context): ProtocolEngine? = when (protocol) {
         "wireguard" -> WireGuardEngine.get(context)
         "amneziawg" -> AmneziaWgEngine.get(context)
-        // vless, trojan, shadowsocks, openvpn — пока не реализованы
+        "vless" -> VlessEngine.get(context)
+        // trojan, shadowsocks, openvpn — пока не реализованы
         else -> null
     }
 }

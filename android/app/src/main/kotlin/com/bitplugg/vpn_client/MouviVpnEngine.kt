@@ -8,7 +8,7 @@ data class VpnConnectRequest(
     val content: String,
     val excludedApplications: List<String>,
     val includedApplications: List<String>,
-    val dnsProtection: Boolean,
+    val dnsServers: List<String>,
 )
 
 /** Результат операции движка без использования stdlib Result в сигнатурах. */

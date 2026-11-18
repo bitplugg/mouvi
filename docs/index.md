@@ -30,8 +30,9 @@ title: Mouvi
 | WireGuard | ✅ |
 | AmneziaWG | ✅ (нужны H1–H4) |
 | WARP (Cloudflare) | ✅ как WireGuard |
+| VLESS (TCP/WS + TLS/Reality) | ✅ Через Xray-core + tun2socks |
 | OpenVPN | 📋 Импорт есть, подключение планируется |
-| Trojan / VLESS / Shadowsocks | 📋 Импорт есть, подключение планируется |
+| Trojan / Shadowsocks | 📋 Импорт есть, подключение планируется |
 
 ---
 
@@ -50,7 +51,7 @@ title: Mouvi
 4. Импортируйте WireGuard/AmneziaWG/WARP-конфигурацию
 5. Подключитесь
 
-OpenVPN, Shadowsocks, VLESS и Trojan пока импортируются без подключения.
+VLESS подключается через Xray-core: поддерживаются TCP/WS и TLS/Reality. OpenVPN, Shadowsocks и Trojan пока импортируются без подключения.
 
 > Если у вас установлена версия 1.0.0 (debug-подпись), её нужно один раз удалить перед установкой 1.1.0: Android не разрешает обновление другим ключом. Перед удалением экспортируйте нужные конфигурации.
 
@@ -66,6 +67,7 @@ OpenVPN, Shadowsocks, VLESS и Trojan пока импортируются без
 | VPN engine | Native Kotlin (`ProtocolEngine`) |
 | WireGuard backend | `com.wireguard.android:tunnel` |
 | AmneziaWG backend | `com.zaneschepke:amneziawg-android` |
+| VLESS backend | Xray-core (SOCKS5) + tun2socks + `MouviVpnService` |
 
 ---
 
@@ -84,8 +86,9 @@ OpenVPN, Shadowsocks, VLESS и Trojan пока импортируются без
 - [x] Локальные уведомления о состоянии соединения
 - [x] Плитка Quick Settings и кнопка «Отключить» в уведомлении
 - [x] Импорт из буфера обмена и QR-кода, экспорт конфига
+- [x] VLESS-движок (TCP/WS + TLS/Reality)
 - [ ] OpenVPN-движок
-- [ ] Trojan / VLESS / Shadowsocks движки
+- [ ] Trojan / Shadowsocks движки
 - [ ] Поддержка iOS
 - [ ] Поддержка Web
 

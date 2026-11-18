@@ -34,7 +34,7 @@
 
         <div class="card">
             <h2>Схема взаимодействия</h2>
-            <p>Flutter (Dart, Riverpod) → MethodChannel('mouvi/vpn') → MainActivity → ProtocolEngineFactory → WireGuardEngine / AmneziaWgEngine → GoBackend</p>
+            <p>Flutter (Dart, Riverpod) → MethodChannel('mouvi/vpn') → MainActivity → ProtocolEngineFactory → WireGuardEngine / AmneziaWgEngine → GoBackend, либо VlessEngine → Xray + tun2socks → MouviVpnService</p>
         </div>
 
         <div class="card">
@@ -44,6 +44,7 @@
                 <tr><td><code>ProtocolEngine</code></td><td><code>ProtocolEngine.kt</code></td><td>Интерфейс движка</td></tr>
                 <tr><td><code>WireGuardEngine</code></td><td><code>WireGuardEngine.kt</code></td><td>WireGuard через com.wireguard.android.backend.GoBackend</td></tr>
                 <tr><td><code>AmneziaWgEngine</code></td><td><code>AmneziaWgEngine.kt</code></td><td>AmneziaWG через org.amnezia.awg.backend.GoBackend</td></tr>
+                <tr><td><code>VlessEngine</code></td><td><code>VlessEngine.kt</code></td><td>VLESS через Xray-core (SOCKS5) + tun2socks + MouviVpnService</td></tr>
                 <tr><td><code>ProtocolEngineFactory</code></td><td><code>ProtocolEngineFactory.kt</code></td><td>Фабрика движков по протоколу</td></tr>
                 <tr><td><code>VpnConnectRequest</code> / <code>VpnResult</code></td><td><code>MouviVpnEngine.kt</code></td><td>Контракт данных с Dart-слоем</td></tr>
             </table>
@@ -60,7 +61,7 @@
                 <li>Создать класс, реализующий <code>ProtocolEngine</code>.</li>
                 <li>Добавить строку в <code>ProtocolEngineFactory.forProtocol()</code>:</li>
             </ol>
-            <pre><code>"vless" -> VlessEngine.get(context)</code></pre>
+            <pre><code>"trojan" -> TrojanEngine.get(context)</code></pre>
             <p>Dart-слой не требует изменений.</p>
         </div>
     </div>

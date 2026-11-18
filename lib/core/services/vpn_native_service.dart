@@ -85,6 +85,10 @@ class VpnEngineException implements Exception {
   static const String notConnected = 'not_connected';
   static const String nativeUnavailable = 'native_unavailable';
   static const String busy = 'busy';
+  static const String connectionCancelled = 'connection_cancelled';
+  static const String connectionTimeout = 'connection_timeout';
+  static const String wifiOnly = 'wifi_only';
+  static const String networkUnavailable = 'network_unavailable';
   static const String unknown = 'unknown';
 
   final String code;
@@ -108,6 +112,7 @@ abstract class VpnEngine {
     List<String> excludedApplications = const <String>[],
     List<String> includedApplications = const <String>[],
     bool dnsProtection = true,
+    List<String> dnsServers = const <String>[],
   });
 
   /// Опустить туннель. Бросает [VpnEngineException] при ошибке.
@@ -170,6 +175,7 @@ class MethodChannelVpnEngine extends VpnEngine {
     List<String> excludedApplications = const <String>[],
     List<String> includedApplications = const <String>[],
     bool dnsProtection = true,
+    List<String> dnsServers = const <String>[],
   }) async {
     try {
       await _channel.invokeMethod<void>('connect', <String, dynamic>{
@@ -180,6 +186,7 @@ class MethodChannelVpnEngine extends VpnEngine {
         'excludedApplications': excludedApplications,
         'includedApplications': includedApplications,
         'dnsProtection': dnsProtection,
+        'dnsServers': dnsServers,
       });
     } on PlatformException catch (error) {
       throw _mapPlatformException(error);

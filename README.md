@@ -33,8 +33,9 @@ Mouvi — это собственный VPN-клиент, разработанн
 | **Протоколы** | WireGuard | ✅ Поддерживается |
 | | AmneziaWG | ✅ Поддерживается (нужны H1–H4) |
 | | WARP (Cloudflare) | ✅ Поддерживается как WireGuard |
+| | VLESS (TCP/WS + TLS/Reality) | ✅ Через Xray-core + tun2socks |
 | | OpenVPN | 📋 Подключение планируется |
-| | Trojan / VLESS / Shadowsocks | 📋 Подключение планируется |
+| | Trojan / Shadowsocks | 📋 Подключение планируется |
 | **Импорт конфигураций** | Файл `.conf` / `.ovpn` / JSON / URI | ✅ Импорт и проверка |
 | | Вставка текста из буфера обмена | ✅ |
 | | Сканирование QR-кода камерой | ✅ |
@@ -132,19 +133,18 @@ interface ProtocolEngine {
 |--------|------|--------|----------|
 | `WireGuardEngine` | `android/app/src/main/kotlin/com/bitplugg/vpn_client/WireGuardEngine.kt` | `com.wireguard.android.backend.GoBackend` | `wireguard` |
 | `AmneziaWgEngine` | `android/app/src/main/kotlin/com/bitplugg/vpn_client/AmneziaWgEngine.kt` | `org.amnezia.awg.backend.GoBackend` | `amneziawg` |
+| `VlessEngine` | `android/app/src/main/kotlin/com/bitplugg/vpn_client/VlessEngine.kt` | Xray-core (SOCKS5) + tun2socks + `MouviVpnService` | `vless` |
 
 ### Процессный синглтон
 
-Оба движка — процессные синглтоны. Это критически важно, потому что нативный `GoBackend` хранит туннель в памяти и сравнивает объекты `Tunnel` по ссылке. После пересоздания Activity новый экземпляр движка не смог бы распознать уже поднятый туннель. Синглтон гарантирует, что состояние туннеля сохраняется корректно.
+Все движки — процессные синглтоны. Для WireGuard/AmneziaWG это критично: нативный `GoBackend` хранит туннель в памяти и сравнивает объекты `Tunnel` по ссылке. Для VLESS синглтон хранит процессы Xray/tun2socks и состояние `MouviVpnService`. После пересоздания Activity состояние туннеля восстанавливается корректно.
 
 ### Как добавить новый протокол
 
-1. Создать класс, реализующий `ProtocolEngine` (например, `VlessEngine`).
-2. Добавить одну строку в `ProtocolEngineFactory.forProtocol()`:
-   ```kotlin
-   "vless" -> VlessEngine.get(context)
-   ```
-3. Dart-слой (`vpn_native_service.dart`, `connection_provider.dart`) не требует изменений — контракт MethodChannel неизменен.
+1. Создать класс, реализующий `ProtocolEngine` (пример — `VlessEngine`).
+2. Добавить одну строку в `ProtocolEngineFactory.forProtocol()`.
+3. Отметить протокол как поддерживаемый в `VpnProtocolTypeX.engineSupported` и добавить валидацию в `config_parser.dart`.
+4. MethodChannel-контракт менять не нужно.
 
 ### MethodChannel контракт
 
@@ -285,14 +285,15 @@ mouvi/
 
 ## 🗺 Roadmap
 
-Реализовано в 1.1.0: split tunneling в режимах «выключен / мимо VPN / только выбранные», защита DNS, автоподключение при запуске, импорт из файла/буфера/QR, экспорт конфига с предупреждением, статистика трафика и рукопожатия, плитка Quick Settings и кнопка «Отключить» в уведомлении, подписанные split-APK в CI.
+Реализовано в 1.1.0: split tunneling в режимах «выключен / мимо VPN / только выбранные», защита DNS, автоподключение при запуске, импорт из файла/буфера/QR, экспорт конфига с предупреждением, статистика трафика и рукопожатия, плитка Quick Settings и кнопка «Отключить» в уведомлении, подписанные split-APK в CI, реальный VLESS через Xray-core + tun2socks.
 
 - [ ] OpenVPN-движок (сейчас `.ovpn` только импортируется)
-- [ ] Trojan / VLESS / Shadowsocks движки (сейчас только импорт)
+- [ ] Trojan / Shadowsocks движки (сейчас только импорт)
+- [ ] Дополнительные VLESS-транспорты (gRPC, QUIC, HTTP Upgrade)
 - [ ] Поддержка iOS
 - [ ] Поддержка Web
 
-> Импорт конфигурации не означает, что протокол поддерживается движком. Для OpenVPN, Shadowsocks, VLESS и Trojan приложение честно показывает «Только импорт».
+> Импорт конфигурации не означает, что протокол поддерживается движком. Для OpenVPN, Shadowsocks и Trojan приложение честно показывает «Только импорт». VLESS поддерживается для TCP/WS с TLS или Reality.
 
 ---
 

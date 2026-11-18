@@ -3,6 +3,8 @@ name: Android Build
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       tag:
@@ -118,15 +120,30 @@ jobs:
       - name: Build debug APK
         run: flutter build apk --debug
 
+      - name: Verify debug APK signature and checksums
+        run: |
+          APK=build/app/outputs/flutter-apk/app-debug.apk
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | head -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found"
+            exit 1
+          fi
+          "$APKSIGNER" verify --print-certs "$APK"
+          sha256sum "$APK" > build/app/outputs/flutter-apk/app-debug.apk.sha256
+          cat build/app/outputs/flutter-apk/app-debug.apk.sha256
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: |
+            build/app/outputs/flutter-apk/app-debug.apk
+            build/app/outputs/flutter-apk/app-debug.apk.sha256
 
   release-apk:
     name: Build release APK and publish release
     needs: [checks, android-unit-tests]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
       KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -271,8 +288,9 @@ jobs:
             echo "| WireGuard | ✅ |"
             echo "| AmneziaWG | ✅ (нужны H1–H4) |"
             echo "| WARP (Cloudflare) | ✅ как WireGuard |"
+            echo "| VLESS | ✅ (Xray-core + tun2socks: TCP/WS, TLS/Reality, xtls-rprx-vision) |"
             echo "| OpenVPN | 📋 Импорт есть, подключение планируется |"
-            echo "| Trojan / VLESS / Shadowsocks | 📋 Импорт есть, подключение планируется |"
+            echo "| Trojan / Shadowsocks | 📋 Импорт есть, подключение планируется |"
             echo ""
             echo "### 🛠 Сборка"
             echo ""
@@ -283,14 +301,14 @@ jobs:
             echo "### 📄 SHA-256"
             echo ""
             echo "**app-arm64-v8a-release.apk**"
-            echo "---"
+            echo '```'
             echo "$SHA_ARM64"
-            echo "---"
+            echo '```'
             echo ""
             echo "**app-armeabi-v7a-release.apk**"
-            echo "---"
+            echo '```'
             echo "$SHA_ARM"
-            echo "---"
+            echo '```'
             echo ""
             echo "Создано автоматически через GitHub Actions."
           } > release-notes.md

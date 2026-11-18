@@ -36,10 +36,12 @@ extension VpnProtocolTypeX on VpnProtocolType {
   /// Поддерживается ли протокол установленным VPN-движком.
   ///
   /// WireGuard и AmneziaWG обслуживаются разными нативными бэкендами
-  /// (`org.wireguard` и `org.amnezia.awg`), остальные протоколы пока
-  /// только импортируются.
+  /// (`org.wireguard` и `org.amnezia.awg`). VLESS запускается через
+  /// Xray-core + tun2socks. Остальные протоколы пока только импортируются.
   bool get engineSupported =>
-      this == VpnProtocolType.wireguard || this == VpnProtocolType.amneziawg;
+      this == VpnProtocolType.wireguard ||
+      this == VpnProtocolType.amneziawg ||
+      this == VpnProtocolType.vless;
 
   /// Идентификатор протокола для нативного канала.
   String get channelName => name;

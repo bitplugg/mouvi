@@ -32,7 +32,10 @@ class HomeScreen extends ConsumerWidget {
 
     final statusText = switch (connection.status) {
       VpnConnectionStatus.disconnected => localizations.t('disconnected'),
-      VpnConnectionStatus.connecting => localizations.t('connecting'),
+      VpnConnectionStatus.connecting =>
+        connection.reconnectAttempt > 0
+            ? '${localizations.t('reconnecting')} (${connection.reconnectAttempt})'
+            : localizations.t('connecting'),
       VpnConnectionStatus.connected => localizations.t('connected'),
       VpnConnectionStatus.disconnecting => localizations.t('disconnecting'),
       VpnConnectionStatus.error => localizations.t('error'),
@@ -186,6 +189,23 @@ class HomeScreen extends ConsumerWidget {
           label: Text(localizations.t('connect')),
         );
       case VpnConnectionStatus.connecting:
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FilledButton.icon(
+              onPressed: () => notifier.cancelConnect(),
+              icon: const Icon(Icons.close),
+              label: Text(localizations.t('cancelConnect')),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              connection.reconnectAttempt > 0
+                  ? '${localizations.t('reconnecting')} (${connection.reconnectAttempt})'
+                  : localizations.t('connecting'),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ],
+        );
       case VpnConnectionStatus.disconnecting:
         return FilledButton.icon(
           onPressed: null,
@@ -197,13 +217,7 @@ class HomeScreen extends ConsumerWidget {
               color: Theme.of(context).colorScheme.onPrimary,
             ),
           ),
-          label: Text(
-            localizations.t(
-              connection.status == VpnConnectionStatus.connecting
-                  ? 'connecting'
-                  : 'disconnecting',
-            ),
-          ),
+          label: Text(localizations.t('disconnecting')),
         );
       case VpnConnectionStatus.connected:
         return FilledButton.icon(

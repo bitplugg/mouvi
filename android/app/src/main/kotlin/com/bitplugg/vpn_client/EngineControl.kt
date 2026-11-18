@@ -20,6 +20,7 @@ object EngineControl {
     fun allEngines(context: Context): List<ProtocolEngine> = listOf(
         WireGuardEngine.get(context.applicationContext),
         AmneziaWgEngine.get(context.applicationContext),
+        VlessEngine.get(context.applicationContext),
     )
 
     fun defaultStateMap(): Map<String, Any?> = mapOf(

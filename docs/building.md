@@ -58,6 +58,23 @@ build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
 Отдельные APK для каждой ABI уменьшают размер загрузки. Универсальный APK
 намеренно не собирается.
 
+## Нативные бинарники VLESS
+
+VLESS использует реальные бинарники, а не заглушки:
+
+- `Xray-core v25.12.8` — `Xray-android-arm64-v8a.zip` для arm64 и сборка из
+  исходников с `GOOS=android GOARCH=arm GOARM=7` для armeabi-v7a;
+- `go-tun2socks` (commit `301549c`) с флагом `-tunFd`, собранный с `-tags socks`
+  для обеих ABI.
+
+Они лежат в `android/app/src/main/jniLibs/<abi>/libxray.so` и
+`libtun2socks.so`. При первом подключении `VlessEngine` копирует их в
+`filesDir`, проверяет SHA-256 и помечает исполняемыми. Split-APK получает
+только бинарники своей ABI.
+
+Конфиг Xray создаётся только с SOCKS5 на loopback; TUN, DNS и split tunneling
+принадлежат `MouviVpnService`. Кастомной криптографии нет.
+
 ### Обновление с 1.0.0
 
 Версия 1.0.0 была подписана debug-ключом. Android не позволит обновить её
