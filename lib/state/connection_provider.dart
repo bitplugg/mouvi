@@ -7,6 +7,7 @@ import 'package:mouvi/core/models/vpn_config.dart';
 import 'package:mouvi/core/services/push_notification_service.dart';
 import 'package:mouvi/core/services/vpn_native_service.dart';
 import 'package:mouvi/core/utils/config_parser.dart';
+import 'package:mouvi/state/diagnostics_provider.dart';
 import 'package:mouvi/state/locale_provider.dart';
 import 'package:mouvi/state/saved_configs_provider.dart';
 import 'package:mouvi/state/vpn_settings_provider.dart';
@@ -356,6 +357,12 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         ? settings.selectedApplications
         : const <String>[];
 
+    ref
+        .read(diagnosticsProvider.notifier)
+        .info(
+          isReconnect ? 'Reconnect attempt' : 'Connect requested',
+          details: '${config.name} (${config.protocol.name})',
+        );
     state = VpnConnectionState(
       status: VpnConnectionStatus.connecting,
       activeConfig: config,
@@ -390,6 +397,9 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       unawaited(_writeActiveConfigId(config.id));
       final connectedAt = DateTime.now();
       unawaited(_writeConnectedAt(connectedAt));
+      ref
+          .read(diagnosticsProvider.notifier)
+          .info('Connected', details: config.name);
       state = VpnConnectionState(
         status: VpnConnectionStatus.connected,
         activeConfig: config,
@@ -454,6 +464,12 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     String code,
     String? details,
   ) async {
+    ref
+        .read(diagnosticsProvider.notifier)
+        .error(
+          'Connect failed',
+          details: '$code${details == null ? '' : ': $details'}',
+        );
     final settings = ref.read(vpnSettingsProvider);
     final canRetry =
         settings.autoReconnectEnabled &&
@@ -523,6 +539,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     if (state.status != VpnConnectionStatus.connecting) {
       return;
     }
+    ref.read(diagnosticsProvider.notifier).warn('Connect cancelled by user');
     _connectCancelRequested = true;
     _userInitiatedDisconnect = true;
     _cancelReconnectTimer();
@@ -575,6 +592,9 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         return;
       }
       unawaited(_writeConnectedAt(null));
+      ref
+          .read(diagnosticsProvider.notifier)
+          .info('Disconnected', details: config?.name);
       state = VpnConnectionState(
         status: VpnConnectionStatus.disconnected,
         activeConfig: config,

@@ -15,15 +15,25 @@ import 'package:mouvi/state/locale_provider.dart';
 import 'package:mouvi/state/saved_configs_provider.dart';
 import 'package:mouvi/ui/servers/qr_scan_screen.dart';
 
-class ServersScreen extends ConsumerWidget {
+class ServersScreen extends ConsumerStatefulWidget {
   const ServersScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ServersScreen> createState() => _ServersScreenState();
+}
+
+class _ServersScreenState extends ConsumerState<ServersScreen> {
+  String _query = '';
+  VpnProtocolType? _protocolFilter;
+
+  @override
+  Widget build(BuildContext context) {
     final locale = ref.watch(localeProvider);
     final localizations = AppLocalizations(locale);
     final savedConfigs = ref.watch(savedConfigsProvider);
     final connection = ref.watch(connectionProvider);
+
+    final filtered = _filterConfigs(savedConfigs);
 
     return Scaffold(
       appBar: AppBar(
@@ -38,16 +48,85 @@ class ServersScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: savedConfigs.isEmpty
-          ? _buildEmptyState(context, ref, localizations)
-          : _buildConfigList(
-              context,
-              ref,
-              savedConfigs,
-              connection,
-              localizations,
+      body: Column(
+        children: [
+          if (savedConfigs.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Column(
+                children: [
+                  TextField(
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: localizations.t('searchServers'),
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: (value) => setState(() => _query = value),
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: FilterChip(
+                            label: Text(localizations.t('allProtocols')),
+                            selected: _protocolFilter == null,
+                            onSelected: (_) =>
+                                setState(() => _protocolFilter = null),
+                          ),
+                        ),
+                        for (final protocol in VpnProtocolType.values)
+                          if (protocol != VpnProtocolType.unknown)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: FilterChip(
+                                label: Text(localizations.t(protocol.labelKey)),
+                                selected: _protocolFilter == protocol,
+                                onSelected: (_) =>
+                                    setState(() => _protocolFilter = protocol),
+                              ),
+                            ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
+          Expanded(
+            child: savedConfigs.isEmpty
+                ? _buildEmptyState(context, ref, localizations)
+                : filtered.isEmpty
+                ? Center(child: Text(localizations.t('noResults')))
+                : _buildConfigList(
+                    context,
+                    ref,
+                    filtered,
+                    connection,
+                    localizations,
+                  ),
+          ),
+        ],
+      ),
     );
+  }
+
+  List<VpnConfig> _filterConfigs(List<VpnConfig> configs) {
+    final q = _query.trim().toLowerCase();
+    return configs
+        .where((config) {
+          if (_protocolFilter != null && config.protocol != _protocolFilter) {
+            return false;
+          }
+          if (q.isEmpty) {
+            return true;
+          }
+          return config.name.toLowerCase().contains(q) ||
+              config.protocol.name.toLowerCase().contains(q);
+        })
+        .toList(growable: false);
   }
 
   Widget _buildEmptyState(
@@ -112,6 +191,8 @@ class ServersScreen extends ConsumerWidget {
           busy: connection.isBusy,
           onConnect: () => _connectTo(context, ref, config, localizations),
           onRename: () => _renameConfig(context, ref, config, localizations),
+          onDuplicate: () =>
+              _duplicateConfig(context, ref, config, localizations),
           onExport: () => _exportConfig(context, ref, config, localizations),
           onDelete: () => _deleteConfig(context, ref, config, localizations),
         );
@@ -181,6 +262,28 @@ class ServersScreen extends ConsumerWidget {
     ).showSnackBar(SnackBar(content: Text(localizations.t('serverRenamed'))));
   }
 
+  Future<void> _duplicateConfig(
+    BuildContext context,
+    WidgetRef ref,
+    VpnConfig config,
+    AppLocalizations localizations,
+  ) async {
+    final copy = VpnConfig(
+      id: '${DateTime.now().microsecondsSinceEpoch}',
+      name: '${config.name} (copy)',
+      protocol: config.protocol,
+      content: config.content,
+      createdAt: DateTime.now(),
+    );
+    await ref.read(savedConfigsProvider.notifier).addConfig(copy);
+    if (!context.mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(localizations.t('configDuplicated'))),
+    );
+  }
+
   Future<void> _deleteConfig(
     BuildContext context,
     WidgetRef ref,
@@ -212,11 +315,22 @@ class ServersScreen extends ConsumerWidget {
     if (!context.mounted) {
       return;
     }
-    final messageKey = notifier.lastWriteFailed
-        ? 'storageWriteFailed'
-        : 'configDeleted';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(localizations.t(messageKey))));
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(localizations.t('configDeleted')),
+        action: SnackBarAction(
+          label: localizations.t('undo'),
+          onPressed: () {
+            unawaited(notifier.addConfig(config));
+            messenger.showSnackBar(
+              SnackBar(content: Text(localizations.t('configRestored'))),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _openAddSheet(
@@ -373,10 +487,6 @@ class ServersScreen extends ConsumerWidget {
     contentController.dispose();
   }
 
-  /// Вставка конфигурации из системного буфера обмена.
-  ///
-  /// Пользователь сам копирует текст конфига, приложение не читает буфер
-  /// автоматически при запуске.
   Future<void> _pasteFromClipboard(
     WidgetRef ref,
     BuildContext context,
@@ -415,10 +525,6 @@ class ServersScreen extends ConsumerWidget {
     await _addConfig(ref, context, localizations, trimmed);
   }
 
-  /// Экспорт конфигурации в файл через системный диалог.
-  ///
-  /// Перед сохранением показываем предупреждение: файл содержит приватный
-  /// ключ, и приложение не должно создавать его молча.
   Future<void> _exportConfig(
     BuildContext context,
     WidgetRef ref,
@@ -464,19 +570,20 @@ class ServersScreen extends ConsumerWidget {
         .showSnackBar(SnackBar(content: Text(localizations.t(messageKey))));
   }
 
-  Future<void> _addConfig(
+  Future<bool> _addConfig(
     WidgetRef ref,
     BuildContext context,
     AppLocalizations localizations,
     String content, {
     String? name,
+    bool showResult = true,
   }) async {
     final validation = validateConfig(content);
     if (!validation.isValid) {
-      if (context.mounted) {
+      if (context.mounted && showResult) {
         _showImportError(context, localizations, validation.errors);
       }
-      return;
+      return false;
     }
     final config = VpnConfig(
       id: '${DateTime.now().microsecondsSinceEpoch}',
@@ -489,8 +596,8 @@ class ServersScreen extends ConsumerWidget {
     );
     final notifier = ref.read(savedConfigsProvider.notifier);
     await notifier.addConfig(config);
-    if (!context.mounted) {
-      return;
+    if (!context.mounted || !showResult) {
+      return true;
     }
     final messageKey = notifier.lastWriteFailed
         ? 'storageWriteFailed'
@@ -505,6 +612,7 @@ class ServersScreen extends ConsumerWidget {
         : '${localizations.t(messageKey)}\n$details';
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+    return true;
   }
 
   void _showImportError(
@@ -538,6 +646,7 @@ class _ServerCard extends StatelessWidget {
     required this.busy,
     required this.onConnect,
     required this.onRename,
+    required this.onDuplicate,
     required this.onExport,
     required this.onDelete,
   });
@@ -549,6 +658,7 @@ class _ServerCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onConnect;
   final VoidCallback onRename;
+  final VoidCallback onDuplicate;
   final VoidCallback onExport;
   final VoidCallback onDelete;
 
@@ -577,6 +687,7 @@ class _ServerCard extends StatelessWidget {
           child: Wrap(
             spacing: 8,
             runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
                 localizations.t(config.protocol.labelKey),
@@ -602,10 +713,13 @@ class _ServerCard extends StatelessWidget {
         ),
         trailing: PopupMenuButton<String>(
           enabled: !busy,
+          tooltip: localizations.t('servers'),
           onSelected: (value) {
             switch (value) {
               case 'rename':
                 onRename();
+              case 'duplicate':
+                onDuplicate();
               case 'export':
                 onExport();
               case 'delete':
@@ -619,6 +733,14 @@ class _ServerCard extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.edit_outlined),
                 title: Text(localizations.t('rename')),
+              ),
+            ),
+            PopupMenuItem(
+              value: 'duplicate',
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.copy_outlined),
+                title: Text(localizations.t('duplicate')),
               ),
             ),
             PopupMenuItem(

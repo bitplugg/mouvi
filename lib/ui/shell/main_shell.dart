@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/services/vpn_native_service.dart';
 import 'package:mouvi/state/connection_provider.dart';
@@ -39,6 +40,38 @@ class _MainShellState extends ConsumerState<MainShell> {
             // Канал действий недоступен — обычный запуск приложения.
           },
         );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_maybeShowOnboarding());
+    });
+  }
+
+  Future<void> _maybeShowOnboarding() async {
+    if (!mounted) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('mouvi.onboarding_done') == true) {
+        return;
+      }
+      if (!mounted) return;
+      final localizations = AppLocalizations(ref.read(localeProvider));
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(localizations.t('onboardingTitle')),
+          content: Text(localizations.t('onboardingMessage')),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(localizations.t('getStarted')),
+            ),
+          ],
+        ),
+      );
+      await prefs.setBool('mouvi.onboarding_done', true);
+    } catch (_) {
+      // Онбординг не критичен.
+    }
   }
 
   @override

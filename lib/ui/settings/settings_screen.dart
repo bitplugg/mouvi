@@ -9,6 +9,7 @@ import 'package:mouvi/core/services/vpn_native_service.dart';
 import 'package:mouvi/state/locale_provider.dart';
 import 'package:mouvi/state/theme_provider.dart';
 import 'package:mouvi/state/vpn_settings_provider.dart';
+import 'package:mouvi/ui/settings/diagnostics_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -400,6 +401,37 @@ class SettingsScreen extends ConsumerWidget {
                 ListTile(
                   leading: const Icon(Icons.lock_outline),
                   title: Text(localizations.t('storageEncrypted')),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            localizations.t('diagnostics'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.bug_report_outlined),
+                  title: Text(localizations.t('diagnostics')),
+                  subtitle: Text(localizations.t('diagnosticsHint')),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const DiagnosticsScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: Text(localizations.t('about')),
+                  subtitle: Text('${localizations.t('appVersion')}: 1.2.0+3'),
                 ),
               ],
             ),
