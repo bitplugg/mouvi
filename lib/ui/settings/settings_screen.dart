@@ -8,8 +8,15 @@ import 'package:mouvi/core/services/push_notification_service.dart';
 import 'package:mouvi/core/services/vpn_native_service.dart';
 import 'package:mouvi/state/locale_provider.dart';
 import 'package:mouvi/state/theme_provider.dart';
+import 'package:mouvi/state/update_provider.dart';
 import 'package:mouvi/state/vpn_settings_provider.dart';
 import 'package:mouvi/ui/settings/diagnostics_screen.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+final packageInfoProvider = FutureProvider<PackageInfo>((ref) async {
+  return PackageInfo.fromPlatform();
+});
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -21,6 +28,8 @@ class SettingsScreen extends ConsumerWidget {
     final localizations = AppLocalizations(locale);
     final settings = ref.watch(vpnSettingsProvider);
     final notificationsEnabled = ref.watch(pushNotificationsEnabledProvider);
+    final packageInfoAsync = ref.watch(packageInfoProvider);
+    final updateState = ref.watch(updateProvider);
 
     final themeSelection = switch (themePreference) {
       ThemePreference.system => 'system',
@@ -28,12 +37,12 @@ class SettingsScreen extends ConsumerWidget {
       ThemePreference.dark => 'dark',
     };
 
-    final languageSelection = locale.languageCode == 'ru' ? 'ru' : 'en';
+    final languageSelection = locale.languageCode;
 
     return Scaffold(
       appBar: AppBar(title: Text(localizations.t('settings'))),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           Text(
             localizations.t('appearance'),
@@ -42,69 +51,78 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 8),
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: SegmentedButton<String>(
-                segments: [
-                  ButtonSegment(
-                    value: 'system',
-                    label: Text(localizations.t('themeSystem')),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    localizations.t('theme'),
+                    style: Theme.of(context).textTheme.titleSmall,
                   ),
-                  ButtonSegment(
-                    value: 'light',
-                    label: Text(localizations.t('themeLight')),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(
+                          value: 'system',
+                          label: Text(localizations.t('themeSystem')),
+                        ),
+                        ButtonSegment(
+                          value: 'light',
+                          label: Text(localizations.t('themeLight')),
+                        ),
+                        ButtonSegment(
+                          value: 'dark',
+                          label: Text(localizations.t('themeDark')),
+                        ),
+                      ],
+                      selected: <String>{themeSelection},
+                      onSelectionChanged: (value) {
+                        final selected = value.first;
+                        final preference = switch (selected) {
+                          'light' => ThemePreference.light,
+                          'dark' => ThemePreference.dark,
+                          _ => ThemePreference.system,
+                        };
+                        unawaited(
+                          ref
+                              .read(themePreferenceProvider.notifier)
+                              .updateThemePreference(preference),
+                        );
+                      },
+                    ),
                   ),
-                  ButtonSegment(
-                    value: 'dark',
-                    label: Text(localizations.t('themeDark')),
+                  const SizedBox(height: 16),
+                  Text(
+                    localizations.t('language'),
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(
+                          value: 'ru',
+                          label: Text(localizations.t('russian')),
+                        ),
+                        ButtonSegment(
+                          value: 'en',
+                          label: Text(localizations.t('english')),
+                        ),
+                      ],
+                      selected: <String>{languageSelection},
+                      onSelectionChanged: (value) {
+                        unawaited(
+                          ref
+                              .read(localeProvider.notifier)
+                              .updateLocale(Locale(value.first)),
+                        );
+                      },
+                    ),
                   ),
                 ],
-                selected: <String>{themeSelection},
-                onSelectionChanged: (value) {
-                  if (value.length == 1) {
-                    final key = value.first;
-                    unawaited(
-                      ref
-                          .read(themePreferenceProvider.notifier)
-                          .updateThemePreference(switch (key) {
-                            'light' => ThemePreference.light,
-                            'dark' => ThemePreference.dark,
-                            _ => ThemePreference.system,
-                          }),
-                    );
-                  }
-                },
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            localizations.t('language'),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: SegmentedButton<String>(
-                segments: [
-                  ButtonSegment(
-                    value: 'ru',
-                    label: Text(localizations.t('russian')),
-                  ),
-                  ButtonSegment(
-                    value: 'en',
-                    label: Text(localizations.t('english')),
-                  ),
-                ],
-                selected: <String>{languageSelection},
-                onSelectionChanged: (value) {
-                  final language = value.first;
-                  unawaited(
-                    ref
-                        .read(localeProvider.notifier)
-                        .updateLocale(Locale(language)),
-                  );
-                },
               ),
             ),
           ),
@@ -115,7 +133,7 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           _SystemVpnCard(localizations: localizations),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Card(
             child: Column(
               children: [
@@ -407,6 +425,116 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
           Text(
+            localizations.t('about'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: Text(localizations.t('appVersion')),
+                  subtitle: packageInfoAsync.when(
+                    data: (info) => Text('${info.version}+${info.buildNumber}'),
+                    loading: () => Text(localizations.t('appVersion')),
+                    error: (error, stackTrace) => Text('1.3.0+4'),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.system_update_alt),
+                  title: Text(localizations.t('updates')),
+                  subtitle: _buildUpdateSubtitle(
+                    context,
+                    localizations,
+                    updateState,
+                  ),
+                  trailing: updateState.status == UpdateCheckStatus.checking
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : FilledButton.tonal(
+                          onPressed: () => unawaited(
+                            ref.read(updateProvider.notifier).check(),
+                          ),
+                          child: Text(localizations.t('checkForUpdates')),
+                        ),
+                ),
+                if (updateState.status == UpdateCheckStatus.updateAvailable &&
+                    updateState.info != null) ...[
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${localizations.t('latestVersion')}: ${updateState.info!.latestVersion.isEmpty ? updateState.info!.tagName : updateState.info!.latestVersion}',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        if (updateState.info!.releaseNotes.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            localizations.t('releaseNotes'),
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _shortNotes(updateState.info!.releaseNotes),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton.icon(
+                              onPressed: () => unawaited(
+                                _downloadUpdate(context, updateState),
+                              ),
+                              icon: const Icon(Icons.download),
+                              label: Text(localizations.t('downloadUpdate')),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: () => unawaited(
+                                _openReleasePage(context, updateState),
+                              ),
+                              icon: const Icon(Icons.open_in_new),
+                              label: Text(localizations.t('openReleasePage')),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (updateState.status == UpdateCheckStatus.upToDate ||
+                    updateState.status == UpdateCheckStatus.error) ...[
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: updateState.info == null
+                            ? null
+                            : () => unawaited(
+                                _openReleasePage(context, updateState),
+                              ),
+                        icon: const Icon(Icons.open_in_new),
+                        label: Text(localizations.t('openReleasePage')),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
             localizations.t('diagnostics'),
             style: Theme.of(context).textTheme.titleMedium,
           ),
@@ -427,18 +555,78 @@ class SettingsScreen extends ConsumerWidget {
                     );
                   },
                 ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.info_outline),
-                  title: Text(localizations.t('about')),
-                  subtitle: Text('${localizations.t('appVersion')}: 1.2.0+3'),
-                ),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  static String _shortNotes(String notes) {
+    final trimmed = notes.trim();
+    if (trimmed.length <= 400) {
+      return trimmed;
+    }
+    return '${trimmed.substring(0, 400).trimRight()}…';
+  }
+
+  Widget _buildUpdateSubtitle(
+    BuildContext context,
+    AppLocalizations localizations,
+    UpdateState updateState,
+  ) {
+    return switch (updateState.status) {
+      UpdateCheckStatus.idle => Text(localizations.t('checkForUpdates')),
+      UpdateCheckStatus.checking => Text(localizations.t('checkingUpdates')),
+      UpdateCheckStatus.upToDate => Text(localizations.t('upToDate')),
+      UpdateCheckStatus.updateAvailable => Text(
+        '${localizations.t('newVersionAvailable')}: ${updateState.info?.latestVersion ?? updateState.info?.tagName ?? ''}',
+      ),
+      UpdateCheckStatus.error => Text(
+        '${localizations.t('updateCheckFailed')}${updateState.errorCode == null ? '' : ' (${updateState.errorCode})'}',
+      ),
+    };
+  }
+
+  Future<void> _downloadUpdate(
+    BuildContext context,
+    UpdateState updateState,
+  ) async {
+    final info = updateState.info;
+    if (info == null) {
+      return;
+    }
+    final asset = info.preferredApkAsset();
+    final url = asset?.browserDownloadUrl ?? info.releaseUrl;
+    await _launchExternal(context, url);
+  }
+
+  Future<void> _openReleasePage(
+    BuildContext context,
+    UpdateState updateState,
+  ) async {
+    final info = updateState.info;
+    if (info == null) {
+      await _launchExternal(
+        context,
+        'https://github.com/bitplugg/mouvi/releases/latest',
+      );
+      return;
+    }
+    await _launchExternal(context, info.releaseUrl);
+  }
+
+  Future<void> _launchExternal(BuildContext context, String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      return;
+    }
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Could not open link')));
+    }
   }
 
   Future<void> _toggleNotifications(
