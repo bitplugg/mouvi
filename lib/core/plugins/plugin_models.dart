@@ -20,6 +20,8 @@ enum PluginHook {
   uriHandlers,
 }
 
+enum PluginRuntimeKind { none, javascript }
+
 enum PluginSourceKind { store, localFile, url, unknown }
 
 class PluginManifest {
@@ -36,6 +38,10 @@ class PluginManifest {
     this.hooks = const <PluginHook>[],
     this.importRules = const <PluginImportRule>[],
     this.dependencies = const <String, String>{},
+    this.runtime = PluginRuntimeKind.none,
+    this.entry,
+    this.engine = const <String, dynamic>{},
+    this.ui = const <String, dynamic>{},
   });
 
   final String id;
@@ -50,6 +56,10 @@ class PluginManifest {
   final List<PluginHook> hooks;
   final List<PluginImportRule> importRules;
   final Map<String, String> dependencies;
+  final PluginRuntimeKind runtime;
+  final String? entry;
+  final Map<String, dynamic> engine;
+  final Map<String, dynamic> ui;
 
   factory PluginManifest.fromJson(Map<String, dynamic> json) {
     String readString(String key, {String fallback = ''}) {
@@ -129,6 +139,30 @@ class PluginManifest {
       }
     }
 
+    PluginRuntimeKind readRuntime() {
+      final raw = json['runtime'];
+      if (raw is! String) return PluginRuntimeKind.none;
+      final v = raw.trim().toLowerCase();
+      if (v == 'javascript' || v == 'js' || v == 'quickjs') {
+        return PluginRuntimeKind.javascript;
+      }
+      return PluginRuntimeKind.none;
+    }
+
+    String? readOptionalString(String key) {
+      final v = json[key];
+      if (v is String && v.trim().isNotEmpty) return v.trim();
+      return null;
+    }
+
+    Map<String, dynamic> readObject(String key) {
+      final v = json[key];
+      if (v is Map) {
+        return v.map((k, val) => MapEntry(k.toString(), val));
+      }
+      return const <String, dynamic>{};
+    }
+
     return PluginManifest(
       id: readString('id'),
       name: readString('name'),
@@ -150,6 +184,10 @@ class PluginManifest {
       hooks: readEnumList('hooks', PluginHook.values, hookName),
       importRules: importRules,
       dependencies: deps,
+      runtime: readRuntime(),
+      entry: readOptionalString('entry'),
+      engine: readObject('engine'),
+      ui: readObject('ui'),
     );
   }
 
@@ -166,7 +204,14 @@ class PluginManifest {
     'hooks': hooks.map((h) => h.name).toList(),
     'importRules': importRules.map((r) => r.toJson()).toList(),
     if (dependencies.isNotEmpty) 'dependencies': dependencies,
+    if (runtime != PluginRuntimeKind.none) 'runtime': runtime.name,
+    if (entry != null && entry!.isNotEmpty) 'entry': entry,
+    if (engine.isNotEmpty) 'engine': engine,
+    if (ui.isNotEmpty) 'ui': ui,
   };
+
+  bool get hasRuntime =>
+      runtime != PluginRuntimeKind.none && (entry?.isNotEmpty ?? false);
 
   bool get isValid => id.trim().isNotEmpty && name.trim().isNotEmpty;
 }
@@ -265,6 +310,7 @@ class InstalledPlugin {
     required this.sourceRef,
     required this.enabled,
     required this.riskAccepted,
+    this.packageHash,
   });
 
   final PluginManifest manifest;
@@ -274,6 +320,8 @@ class InstalledPlugin {
   final String sourceRef; // file path, url, or store ref
   final bool enabled;
   final bool riskAccepted;
+  final String?
+  packageHash; // SHA-256 of installed .mu package bytes (if known)
 
   bool get isOfficialStoreSource {
     final ref = sourceRef.toLowerCase();
@@ -282,7 +330,11 @@ class InstalledPlugin {
         ref.contains('raw.githubusercontent.com/bitplugg/mouvi-store');
   }
 
-  InstalledPlugin copyWith({bool? enabled, bool? riskAccepted}) {
+  InstalledPlugin copyWith({
+    bool? enabled,
+    bool? riskAccepted,
+    String? packageHash,
+  }) {
     return InstalledPlugin(
       manifest: manifest,
       installPath: installPath,
@@ -291,8 +343,18 @@ class InstalledPlugin {
       sourceRef: sourceRef,
       enabled: enabled ?? this.enabled,
       riskAccepted: riskAccepted ?? this.riskAccepted,
+      packageHash: packageHash ?? this.packageHash,
     );
   }
+
+  Map<String, dynamic> toRuntimeContext() => <String, dynamic>{
+    'id': manifest.id,
+    'name': manifest.name,
+    'version': manifest.version,
+    'installPath': installPath,
+    'permissions': manifest.permissions.map((p) => p.name).toList(),
+    'hooks': manifest.hooks.map((h) => h.name).toList(),
+  };
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'manifest': manifest.toJson(),
@@ -302,6 +364,8 @@ class InstalledPlugin {
     'sourceRef': sourceRef,
     'enabled': enabled,
     'riskAccepted': riskAccepted,
+    if (packageHash != null && packageHash!.isNotEmpty)
+      'packageHash': packageHash,
   };
 
   static InstalledPlugin? fromJson(Object? raw) {
@@ -318,6 +382,7 @@ class InstalledPlugin {
       (e) => e.name == sourceKindName,
       orElse: () => PluginSourceKind.unknown,
     );
+    final hash = (map['packageHash'] as String?)?.trim();
     return InstalledPlugin(
       manifest: manifest,
       installPath: (map['installPath'] as String?) ?? '',
@@ -328,8 +393,31 @@ class InstalledPlugin {
       sourceRef: (map['sourceRef'] as String?) ?? '',
       enabled: map['enabled'] == true,
       riskAccepted: map['riskAccepted'] == true,
+      packageHash: (hash == null || hash.isEmpty) ? null : hash,
     );
   }
+}
+
+class PluginImportMatch {
+  const PluginImportMatch({
+    required this.pluginId,
+    required this.pluginName,
+    required this.ruleId,
+    required this.label,
+    this.protocol,
+    this.content,
+    this.name,
+    this.metadata = const <String, dynamic>{},
+  });
+
+  final String pluginId;
+  final String pluginName;
+  final String ruleId;
+  final String label;
+  final String? protocol;
+  final String? content;
+  final String? name;
+  final Map<String, dynamic> metadata;
 }
 
 String encodeInstalledPlugins(List<InstalledPlugin> plugins) {

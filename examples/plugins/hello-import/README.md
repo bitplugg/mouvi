@@ -1,46 +1,26 @@
-# Example Mouvi plugins
+# Hello Import (Example plugin)
 
-## `hello-import.mu`
-Эталонный `.mu`-плагин для проверки системы плагинов.
+Эталонный runtime-плагин Mouvi (`.mu`): демонстрирует **код** (JavaScript/QuickJS), **UI-расширение**, **события соединения** и **engine-адаптер** (хук `prepareEngineConnection`).
 
-- **Хук:** `importValidation` (декларативные правила в манифесте)
-- **Что делает:** распознаёт конфиги, начинающиеся с `mouvi-example://` или содержащие маркер `[MouviExample]`, и позволяет импортировать их в Mouvi.
-- **Установка:** Настройки → Плагины → «Установить плагин» → «Установить из файла» → выбрать `hello-import.mu`.
-- **Примечание:** плагин сторонний (не из `bitplugg/mouvi-store`), поэтому при включении потребуется подтверждение: **«Я согласен со всеми рисками»**.
+## Что делает
+- `importValidation` (runtime + декларативные правила): распознаёт `mouvi-example://...` и `[MouviExample]`, ведёт счётчик импортов в `ownStorage`.
+- `connectionEvents`: записывает последние события (`beforeConnect`, `afterConnect`, `disconnect`, `connectError`, `networkChange`).
+- `uiExtensions`: показывает экран в **Настройки → Плагины** (статус, последнее событие, кнопки `Ping`/`Очистить`).
+- `engineProvider`: пример `prepareEngineConnection` (адаптер/мост к нативным движкам `wireguard|amneziawg|vless`) — в демо заглушка (`handled:false`).
+- `uriHandlers`: пример обработки `mouvi-example://` URI.
 
-### Тестовый конфиг
-```
-mouvi-example://demo#Example
-```
-или
-```
-[MouviExample]
-name=demo
+## Сборка
+Из корня репозитория Mouvi:
+```bash
+./mouvi-builder validate examples/plugins/hello-import
+./mouvi-builder build examples/plugins/hello-import -o examples/plugins/hello-import.mu
 ```
 
-## Формат `.mu` (MVP)
-`.mu` — это ZIP-архив, содержащий как минимум `manifest.json` в корне.
+## Установка
+**Настройки → Плагины → (＋) → Установить из файла** → выбрать `hello-import.mu`.
+Плагин не из официального магазина, при активации нужно подтвердить: **«Я согласен со всеми рисками»**.
+Базовый `mouvi-engine` должен быть включён.
 
-Минимальный пример манифеста:
-```json
-{
-  "id": "com.vendor.plugin",
-  "name": "My Plugin",
-  "version": "1.0.0",
-  "apiVersion": 1,
-  "author": "Author",
-  "description": "Description",
-  "permissions": ["ownStorage", "connectionState", "configsMetadata"],
-  "hooks": ["importValidation"],
-  "importRules": [
-    {
-      "id": "rule-id",
-      "label": "MyFormat",
-      "uriSchemes": ["myproto://"],
-      "containsAny": ["[MySection]"]
-    }
-  ]
-}
-```
-
-Базовый плагин `mouvi-engine` поставляется встроенным: при его отключении остальные плагины не работают. Плагины не из `bitplugg/mouvi-store` требуют явного согласия с рисками перед активацией.
+## Тест
+- Импорт конфига: `mouvi-example://demo#Example` или `[MouviExample]\nname=demo`
+- UI/события: откройте карточку расширения плагина в экране «Плагины» и выполните подключение/отключение, чтобы увидеть события.

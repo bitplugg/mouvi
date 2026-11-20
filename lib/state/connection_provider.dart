@@ -4,6 +4,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
+import 'package:mouvi/core/plugins/plugin_registry.dart';
 import 'package:mouvi/core/services/push_notification_service.dart';
 import 'package:mouvi/core/services/vpn_native_service.dart';
 import 'package:mouvi/core/utils/config_parser.dart';
@@ -304,19 +305,49 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         state.activeConfig?.id == config.id) {
       return;
     }
+
+    VpnConfig effectiveConfig = config;
+    var engineHandledByPlugin = false;
     if (!config.protocol.engineSupported) {
+      final prepared = await _prepareEngineConfig(config);
+      if (prepared != null) {
+        effectiveConfig = prepared;
+        engineHandledByPlugin = true;
+      }
+    }
+
+    if (!effectiveConfig.protocol.engineSupported) {
       state = VpnConnectionState(
         status: VpnConnectionStatus.error,
         activeConfig: config,
         errorCode: VpnEngineException.unsupportedProtocol,
       );
+      unawaited(
+        _emitPluginEvent('connectError', <String, dynamic>{
+          'configId': config.id,
+          'name': config.name,
+          'protocol': config.protocol.name,
+          'code': VpnEngineException.unsupportedProtocol,
+          'engineHandledByPlugin': engineHandledByPlugin,
+        }),
+      );
       return;
     }
-    if (!validateConfig(config.content).isValid) {
+
+    final validation = validateConfig(effectiveConfig.content);
+    if (!validation.isValid) {
       state = VpnConnectionState(
         status: VpnConnectionStatus.error,
         activeConfig: config,
         errorCode: VpnEngineException.invalidConfig,
+      );
+      unawaited(
+        _emitPluginEvent('connectError', <String, dynamic>{
+          'configId': config.id,
+          'name': config.name,
+          'protocol': effectiveConfig.protocol.name,
+          'code': VpnEngineException.invalidConfig,
+        }),
       );
       return;
     }
@@ -327,6 +358,13 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         activeConfig: config,
         errorCode: VpnEngineException.wifiOnly,
       );
+      unawaited(
+        _emitPluginEvent('connectError', <String, dynamic>{
+          'configId': config.id,
+          'name': config.name,
+          'code': VpnEngineException.wifiOnly,
+        }),
+      );
       return;
     }
     if (!await _hasAnyNetwork()) {
@@ -334,6 +372,13 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         status: VpnConnectionStatus.error,
         activeConfig: config,
         errorCode: VpnEngineException.networkUnavailable,
+      );
+      unawaited(
+        _emitPluginEvent('connectError', <String, dynamic>{
+          'configId': config.id,
+          'name': config.name,
+          'code': VpnEngineException.networkUnavailable,
+        }),
       );
       return;
     }
@@ -357,11 +402,21 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         ? settings.selectedApplications
         : const <String>[];
 
+    unawaited(
+      _emitPluginEvent('beforeConnect', <String, dynamic>{
+        'configId': config.id,
+        'name': config.name,
+        'protocol': effectiveConfig.protocol.name,
+        'isReconnect': isReconnect,
+        'engineHandledByPlugin': engineHandledByPlugin,
+      }),
+    );
     ref
         .read(diagnosticsProvider.notifier)
         .info(
           isReconnect ? 'Reconnect attempt' : 'Connect requested',
-          details: '${config.name} (${config.protocol.name})',
+          details:
+              '${config.name} (${effectiveConfig.protocol.name}${engineHandledByPlugin ? ', plugin-engine' : ''})',
         );
     state = VpnConnectionState(
       status: VpnConnectionStatus.connecting,
@@ -372,7 +427,7 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       await ref
           .read(vpnEngineProvider)
           .connect(
-            config,
+            effectiveConfig,
             excludedApplications: excluded,
             includedApplications: included,
             dnsProtection: settings.dnsProtectionEnabled,
@@ -407,6 +462,13 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       );
       _startStatsPolling();
       _notifyPush('connected', config);
+      unawaited(
+        _emitPluginEvent('afterConnect', <String, dynamic>{
+          'configId': config.id,
+          'name': config.name,
+          'protocol': effectiveConfig.protocol.name,
+        }),
+      );
     } on TimeoutException {
       if (!ref.mounted || generation != _connectGeneration) {
         return;
@@ -459,6 +521,77 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     }
   }
 
+  Future<VpnConfig?> _prepareEngineConfig(VpnConfig config) async {
+    try {
+      final prepared = await ref
+          .read(pluginRegistryProvider)
+          .prepareEngineConnection(
+            request: <String, dynamic>{
+              'id': config.id,
+              'name': config.name,
+              'protocol': config.protocol.name,
+              'content': config.content,
+            },
+            hostState: _pluginHostState(),
+          );
+      if (prepared == null) return null;
+      final protocolName = (prepared['protocol'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final content = (prepared['content'] ?? '').toString();
+      if (protocolName.isEmpty || content.trim().isEmpty) return null;
+      VpnProtocolType? protocol;
+      for (final p in VpnProtocolType.values) {
+        if (p.name == protocolName) {
+          protocol = p;
+          break;
+        }
+      }
+      if (protocol == null || !protocol.engineSupported) return null;
+      final name = (prepared['name'] ?? config.name).toString();
+      return VpnConfig(
+        id: config.id,
+        name: name.isEmpty ? config.name : name,
+        protocol: protocol,
+        content: content,
+        createdAt: config.createdAt,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Map<String, dynamic> _pluginHostState() {
+    final cfg = state.activeConfig;
+    return <String, dynamic>{
+      'status': state.status.name,
+      'activeConfig': cfg == null
+          ? null
+          : <String, dynamic>{
+              'id': cfg.id,
+              'name': cfg.name,
+              'protocol': cfg.protocol.name,
+            },
+      'rxBytes': state.rxBytes,
+      'txBytes': state.txBytes,
+      'lastHandshakeMs': state.lastHandshakeMs,
+      'reconnectAttempt': state.reconnectAttempt,
+    };
+  }
+
+  Future<void> _emitPluginEvent(String event, Map<String, dynamic> data) async {
+    try {
+      await ref
+          .read(pluginRegistryProvider)
+          .emitConnectionEvent(
+            event,
+            data: data,
+            hostState: _pluginHostState(),
+          );
+    } catch (_) {}
+  }
+
   Future<void> _handleConnectFailure(
     VpnConfig config,
     String code,
@@ -470,6 +603,14 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
           'Connect failed',
           details: '$code${details == null ? '' : ': $details'}',
         );
+    unawaited(
+      _emitPluginEvent('connectError', <String, dynamic>{
+        'configId': config.id,
+        'name': config.name,
+        'code': code,
+        'details': details,
+      }),
+    );
     final settings = ref.read(vpnSettingsProvider);
     final canRetry =
         settings.autoReconnectEnabled &&
@@ -595,6 +736,13 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
       ref
           .read(diagnosticsProvider.notifier)
           .info('Disconnected', details: config?.name);
+      unawaited(
+        _emitPluginEvent('disconnect', <String, dynamic>{
+          'configId': config?.id,
+          'name': config?.name,
+          'userInitiated': userInitiated,
+        }),
+      );
       state = VpnConnectionState(
         status: VpnConnectionStatus.disconnected,
         activeConfig: config,
@@ -735,6 +883,13 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         lastHandshakeMs: snapshot.lastHandshakeMs,
       );
       _startStatsPolling();
+      unawaited(
+        _emitPluginEvent('afterConnect', <String, dynamic>{
+          'configId': config?.id,
+          'name': config?.name,
+          'native': true,
+        }),
+      );
       return;
     }
     if (state.status != VpnConnectionStatus.connected) {
@@ -748,6 +903,14 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
         !_userInitiatedDisconnect &&
         settings.autoReconnectEnabled &&
         config != null;
+    unawaited(
+      _emitPluginEvent('disconnect', <String, dynamic>{
+        'configId': config?.id,
+        'name': config?.name,
+        'userInitiated': _userInitiatedDisconnect,
+        'native': true,
+      }),
+    );
     if (shouldReconnect) {
       final nextAttempt = 1;
       state = VpnConnectionState(
@@ -777,6 +940,14 @@ class ConnectionNotifier extends Notifier<VpnConnectionState> {
     final hasWifi =
         results.contains(ConnectivityResult.wifi) ||
         results.contains(ConnectivityResult.ethernet);
+
+    unawaited(
+      _emitPluginEvent('networkChange', <String, dynamic>{
+        'hasNetwork': hasNetwork,
+        'hasWifi': hasWifi,
+        'results': results.map((r) => r.name).toList(growable: false),
+      }),
+    );
 
     if (settings.wifiOnly && !hasWifi) {
       if (state.status == VpnConnectionStatus.connecting) {

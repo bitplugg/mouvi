@@ -65,7 +65,7 @@ void _printUsage() {
     '  validate <path>                        Validate a plugin directory or .mu file',
   );
   print(
-    '  init <dir> [--id <id>] [--name <name>] Scaffold a new plugin project',
+    '  init <dir> [--id <id>] [--name <name>] [--with-code] Scaffold a new plugin project',
   );
   print('  help                                   Show this help');
   print('');
@@ -75,7 +75,7 @@ void _printUsage() {
   );
   print('  dart run tool/mouvi_builder.dart validate ./my-plugin');
   print(
-    '  dart run tool/mouvi_builder.dart init ./my-plugin --id com.example.myplugin',
+    '  dart run tool/mouvi_builder.dart init ./my-plugin --id com.example.myplugin --with-code',
   );
 }
 
@@ -96,6 +96,7 @@ Future<void> _build(List<String> args) async {
   }
   final manifest = await _readManifestFromDir(dir);
   _validateManifestMap(manifest);
+  _validateEntryIfPresent(dir, manifest);
 
   final id = (manifest['id'] as String).trim();
   final version = (manifest['version'] as String?)?.trim();
@@ -134,7 +135,28 @@ Future<void> _build(List<String> args) async {
   print('  id: $id');
   print('  name: ${manifest['name']}');
   print('  version: ${version ?? '0.0.0'}');
+  if (manifest['runtime'] is String) {
+    print('  runtime: ${manifest['runtime']}');
+  }
   print('  files: $count');
+}
+
+void _validateEntryIfPresent(Directory dir, Map<String, dynamic> manifest) {
+  final runtime = manifest['runtime'];
+  final entry = manifest['entry'];
+  if (runtime is! String || runtime.trim().isEmpty) return;
+  if (entry is! String || entry.trim().isEmpty) return;
+  final normalizedBase = p.normalize(dir.path);
+  final joined = p.normalize(p.join(normalizedBase, entry.trim()));
+  if (!p.isWithin(normalizedBase, joined) && joined != normalizedBase) {
+    throw _BuilderException(
+      'manifest.entry must be inside the plugin directory',
+    );
+  }
+  final file = File(joined);
+  if (!file.existsSync()) {
+    throw _BuilderException('manifest.entry file not found: ${entry.trim()}');
+  }
 }
 
 Future<void> _validate(List<String> args) async {
@@ -151,15 +173,25 @@ Future<void> _validate(List<String> args) async {
   Map<String, dynamic> manifest;
   if (type == FileSystemEntityType.directory) {
     manifest = await _readManifestFromDir(Directory(target));
+    _validateManifestMap(manifest);
+    _validateEntryIfPresent(Directory(target), manifest);
   } else {
     manifest = await _readManifestFromMu(File(target));
+    _validateManifestMap(manifest);
   }
-  _validateManifestMap(manifest);
   print('OK: manifest is valid');
   print('  id: ${manifest['id']}');
   print('  name: ${manifest['name']}');
   print('  version: ${manifest['version'] ?? '0.0.0'}');
   print('  apiVersion: ${manifest['apiVersion'] ?? 1}');
+  final runtime = manifest['runtime'];
+  if (runtime is String && runtime.trim().isNotEmpty) {
+    print('  runtime: ${runtime.trim()}');
+  }
+  final entry = manifest['entry'];
+  if (entry is String && entry.trim().isNotEmpty) {
+    print('  entry: ${entry.trim()}');
+  }
   final hooks = manifest['hooks'];
   if (hooks is List && hooks.isNotEmpty) {
     print('  hooks: ${hooks.join(', ')}');
@@ -187,6 +219,8 @@ Future<void> _init(List<String> args) async {
     await dir.create(recursive: true);
   }
 
+  final withCode = args.contains('--with-code') || args.contains('--runtime');
+
   final manifest = <String, dynamic>{
     'id': id,
     'name': name,
@@ -195,8 +229,20 @@ Future<void> _init(List<String> args) async {
     'author': 'Your Name',
     'description': 'Describe what this plugin does.',
     'minAppVersion': '1.4.0',
-    'permissions': ['ownStorage', 'connectionState'],
-    'hooks': ['importValidation'],
+    'permissions': [
+      'ownStorage',
+      'connectionState',
+      'configsMetadata',
+      'uiExtensions',
+    ],
+    'hooks': withCode
+        ? [
+            'importValidation',
+            'connectionEvents',
+            'uiExtensions',
+            'engineProvider',
+          ]
+        : ['importValidation'],
     'importRules': [
       {
         'id': 'example-rule',
@@ -206,12 +252,105 @@ Future<void> _init(List<String> args) async {
       },
     ],
     'dependencies': <String, String>{},
+    if (withCode) ...<String, dynamic>{
+      'runtime': 'javascript',
+      'entry': 'main.js',
+      'engine': {
+        'type': 'adapter',
+        'note': 'prepareEngineConnection may transform unsupported config to a supported protocol (e.g. wireguard/vless) when possible',
+      },
+      'ui': {'entryScreen': 'main'},
+    },
   };
 
   final manifestFile = File(p.join(dir.path, 'manifest.json'));
   await manifestFile.writeAsString(
     '${const JsonEncoder.withIndent('  ').convert(manifest)}\n',
   );
+
+  if (withCode) {
+    final mainJs = File(p.join(dir.path, 'main.js'));
+    await mainJs.writeAsString(
+      r'''// Mouvi plugin runtime (QuickJS). Hooks are synchronous.
+// Exports: globalThis.MouviPlugin.hooks = { ... }
+
+function _now() { return Date.now ? Date.now() : 0; }
+
+globalThis.MouviPlugin = {
+  hooks: {
+    // Runtime import validation/parsing. Return {match:true,...} to handle.
+    onImportValidate: function (payload, host) {
+      var content = String((payload && payload.content) || '');
+      var trimmed = content.trim();
+      if (trimmed.indexOf('myproto://') === 0) {
+        return {
+          match: true,
+          label: 'My Protocol',
+          name: 'MyProto config',
+          // Optional: transform to a natively supported protocol config.
+          // protocol: 'wireguard',
+          // content: '[Interface]...'
+          metadata: { recognizedBy: 'runtime' }
+        };
+      }
+      return null;
+    },
+
+    // Connection lifecycle events: beforeConnect, afterConnect, disconnect, connectError, networkChange
+    onConnectionEvent: function (payload, host) {
+      var s = (host && host.storage) || {};
+      var events = Array.isArray(s.events) ? s.events : [];
+      events.push({ t: _now(), event: payload && payload.event, data: payload && payload.data });
+      if (events.length > 20) events = events.slice(events.length - 20);
+      host.storage.events = events;
+      return { ok: true };
+    },
+
+    // Declarative UI extensions rendered by Mouvi settings.
+    getUiExtensions: function (payload, host) {
+      var events = ((host && host.storage && host.storage.events) || []);
+      var last = events.length ? events[events.length - 1] : null;
+      return [{
+        id: 'main',
+        title: 'Plugin UI',
+        items: [
+          { type: 'text', style: 'title', text: 'Runtime plugin is active' },
+          { type: 'keyValue', key: 'Last event', value: last ? String(last.event) : 'none' },
+          { type: 'button', label: 'Ping', action: 'ping', primary: true },
+          { type: 'button', label: 'Clear events', action: 'clearEvents' }
+        ]
+      }];
+    },
+
+    onUiAction: function (payload, host) {
+      var action = payload && payload.action;
+      if (action === 'ping') {
+        return { message: 'pong from plugin runtime' };
+      }
+      if (action === 'clearEvents') {
+        host.storage.events = [];
+        return { message: 'Events cleared', items: [
+          { type: 'text', style: 'title', text: 'Runtime plugin is active' },
+          { type: 'keyValue', key: 'Last event', value: 'none' },
+          { type: 'button', label: 'Ping', action: 'ping', primary: true },
+          { type: 'button', label: 'Clear events', action: 'clearEvents' }
+        ] };
+      }
+      return { message: 'Unknown action: ' + String(action) };
+    },
+
+    // Engine adapter hook: may return {handled:true, protocol:"wireguard"|"amneziawg"|"vless", content:"..."}
+    // to bridge unsupported/custom configs to a natively supported engine.
+    prepareEngineConnection: function (payload, host) {
+      // Example stub: not handling by default.
+      // if (String(payload && payload.protocol) === 'unknown') { return {handled:true, protocol:'wireguard', content:'...'}; }
+      return { handled: false };
+    }
+  }
+};
+''',
+    );
+  }
 
   final readme = File(p.join(dir.path, 'README.md'));
   await readme.writeAsString('''# $name
@@ -244,7 +383,12 @@ Non-store plugins require accepting the risk warning: "Я согласен со 
 
   print('OK: initialized plugin project at $dirPath');
   print('  manifest: ${manifestFile.path}');
-  print('  next: edit manifest.json, add your code/assets, then run:');
+  if (withCode) {
+    print('  entry: ${p.join(dir.path, 'main.js')}');
+  }
+  print(
+    '  next: edit manifest.json${withCode ? ' and main.js' : ''}, then run:',
+  );
   print('        dart run tool/mouvi_builder.dart build $dirPath');
 }
 
@@ -342,6 +486,34 @@ void _validateManifestMap(Map<String, dynamic> manifest) {
   final rules = manifest['importRules'];
   if (rules != null && rules is! List) {
     throw _BuilderException('manifest.importRules must be an array if present');
+  }
+  final runtime = manifest['runtime'];
+  if (runtime != null && runtime is! String) {
+    throw _BuilderException('manifest.runtime must be a string if present');
+  }
+  final runtimeName = runtime is String ? runtime.trim().toLowerCase() : '';
+  if (runtimeName.isNotEmpty &&
+      runtimeName != 'javascript' &&
+      runtimeName != 'js' &&
+      runtimeName != 'quickjs') {
+    throw _BuilderException(
+      'manifest.runtime "$runtime" is not supported (use "javascript")',
+    );
+  }
+  final entry = manifest['entry'];
+  if (entry != null && entry is! String) {
+    throw _BuilderException('manifest.entry must be a string if present');
+  }
+  if (runtimeName.isNotEmpty && (entry is! String || entry.trim().isEmpty)) {
+    throw _BuilderException('manifest.entry is required when runtime is set');
+  }
+  final engine = manifest['engine'];
+  if (engine != null && engine is! Map) {
+    throw _BuilderException('manifest.engine must be an object if present');
+  }
+  final ui = manifest['ui'];
+  if (ui != null && ui is! Map) {
+    throw _BuilderException('manifest.ui must be an object if present');
   }
 }
 

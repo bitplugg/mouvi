@@ -8,14 +8,116 @@ import 'package:http/http.dart' as http;
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/plugins/plugin_models.dart';
 import 'package:mouvi/core/services/plugin_service.dart';
+import 'package:mouvi/state/connection_provider.dart';
 import 'package:mouvi/state/locale_provider.dart';
 import 'package:mouvi/state/plugins_provider.dart';
+import 'package:mouvi/ui/settings/plugin_runtime_ui.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
-class PluginsScreen extends ConsumerWidget {
+class PluginsScreen extends ConsumerStatefulWidget {
   const PluginsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PluginsScreen> createState() => _PluginsScreenState();
+}
+
+class _PluginsScreenState extends ConsumerState<PluginsScreen> {
+  String _appVersion = '';
+  List<_StoreEntry> _storeEntries = const <_StoreEntry>[];
+  bool _storeLoaded = false;
+
+  static const String _indexUrl =
+      'https://raw.githubusercontent.com/bitplugg/mouvi-store/master/index.json';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadAppVersion());
+    unawaited(_loadStoreIndex());
+  }
+
+  Future<void> _loadAppVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() => _appVersion = '${info.version}+${info.buildNumber}');
+    } catch (_) {}
+  }
+
+  Future<void> _loadStoreIndex() async {
+    try {
+      final response = await http
+          .get(Uri.parse(_indexUrl))
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200) return;
+      final decoded = jsonDecode(response.body);
+      final List<dynamic> items;
+      if (decoded is List) {
+        items = decoded;
+      } else if (decoded is Map && decoded['plugins'] is List) {
+        items = decoded['plugins'] as List<dynamic>;
+      } else {
+        items = const <dynamic>[];
+      }
+      final out = <_StoreEntry>[];
+      for (final item in items) {
+        final entry = _StoreEntry.fromJson(item);
+        if (entry != null) out.add(entry);
+      }
+      if (!mounted) return;
+      setState(() {
+        _storeEntries = out;
+        _storeLoaded = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _storeLoaded = true);
+    }
+  }
+
+  _StoreEntry? _storeFor(String pluginId) {
+    for (final e in _storeEntries) {
+      if (e.id == pluginId) return e;
+    }
+    return null;
+  }
+
+  bool _isNewerVersion(String a, String b) {
+    List<int> parse(String v) {
+      final cleaned = v.split('+').first.trim();
+      final parts = cleaned.split('.');
+      return List<int>.generate(3, (i) {
+        if (i >= parts.length) return 0;
+        final m = RegExp(r'^(\d+)').firstMatch(parts[i]);
+        return m == null ? 0 : int.tryParse(m.group(1)!) ?? 0;
+      });
+    }
+
+    final pa = parse(a);
+    final pb = parse(b);
+    for (var i = 0; i < 3; i++) {
+      if (pa[i] != pb[i]) return pa[i] > pb[i];
+    }
+    return false;
+  }
+
+  _UpdateInfo? _updateInfoFor(InstalledPlugin plugin) {
+    final store = _storeFor(plugin.manifest.id);
+    if (store == null || store.version == null || store.version!.isEmpty) {
+      return null;
+    }
+    if (_isNewerVersion(store.version!, plugin.manifest.version)) {
+      return _UpdateInfo(
+        availableVersion: store.version!,
+        description: store.description,
+        downloadUrl: store.downloadUrl,
+      );
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final locale = ref.watch(localeProvider);
     final l10n = AppLocalizations(locale);
     final pluginsAsync = ref.watch(pluginsProvider);
@@ -24,6 +126,11 @@ class PluginsScreen extends ConsumerWidget {
       appBar: AppBar(
         title: Text(l10n.t('plugins')),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Обновить каталог',
+            onPressed: () => unawaited(_loadStoreIndex()),
+          ),
           IconButton(
             icon: const Icon(Icons.store_outlined),
             tooltip: l10n.t('openPluginStore'),
@@ -113,19 +220,58 @@ class PluginsScreen extends ConsumerWidget {
             ),
           ),
         if (!baseEnabled) const SizedBox(height: 12),
+        if (_appVersion.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Версия приложения (пользователя): $_appVersion',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        if (!_storeLoaded)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
         if (plugins.isEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 48),
             child: Center(child: Text(l10n.t('pluginNoPlugins'))),
           )
         else
-          ...ordered.map(
-            (plugin) => _PluginCard(
+          ...ordered.map((plugin) {
+            final updateInfo = _updateInfoFor(plugin);
+            final storeEntry = _storeFor(plugin.manifest.id);
+            final storeUpToDate =
+                _storeLoaded && storeEntry != null && updateInfo == null;
+            return _PluginCard(
               plugin: plugin,
               baseEnabled: baseEnabled,
               l10n: l10n,
-            ),
-          ),
+              appVersion: _appVersion,
+              updateInfo: updateInfo,
+              storeUpToDate: storeUpToDate,
+              onUpdate: (url) => _installFromStoreUrl(context, l10n, url),
+            );
+          }),
+        Builder(
+          builder: (context) {
+            final conn = ref.read(connectionProvider);
+            final active = ref.read(activePluginsProvider);
+            final hostState = <String, dynamic>{
+              'connection': <String, dynamic>{
+                'status': conn.status.name,
+                'activeConfigId': conn.activeConfig?.id,
+                'activeConfigName': conn.activeConfig?.name,
+                'protocol': conn.activeConfig?.protocol.name,
+              },
+            };
+            return PluginExtensionsSection(
+              plugins: active,
+              hostState: hostState,
+            );
+          },
+        ),
         const SizedBox(height: 16),
         Text(
           l10n.t('pluginStore'),
@@ -283,6 +429,28 @@ class PluginsScreen extends ConsumerWidget {
     );
   }
 
+  Future<void> _installFromStoreUrl(
+    BuildContext context,
+    AppLocalizations l10n,
+    String url,
+  ) async {
+    try {
+      final result = await ref
+          .read(pluginsProvider.notifier)
+          .installFromUrl(url);
+      if (!mounted) return;
+      if (!context.mounted) return;
+      await _postInstall(context, ref, l10n, result);
+      unawaited(_loadStoreIndex());
+    } on PluginServiceException catch (e) {
+      if (!context.mounted) return;
+      _showInstallError(context, l10n, e.code);
+    } catch (_) {
+      if (!context.mounted) return;
+      _showInstallError(context, l10n, 'unknown');
+    }
+  }
+
   Future<void> _openStore(
     BuildContext context,
     WidgetRef ref,
@@ -301,19 +469,7 @@ class PluginsScreen extends ConsumerWidget {
           l10n: l10n,
           onInstall: (url) async {
             Navigator.of(sheetInnerContext).pop();
-            try {
-              final result = await ref
-                  .read(pluginsProvider.notifier)
-                  .installFromUrl(url);
-              if (!context.mounted) return;
-              await _postInstall(context, ref, l10n, result);
-            } on PluginServiceException catch (e) {
-              if (!context.mounted) return;
-              _showInstallError(context, l10n, e.code);
-            } catch (_) {
-              if (!context.mounted) return;
-              _showInstallError(context, l10n, 'unknown');
-            }
+            await _installFromStoreUrl(context, l10n, url);
           },
         ),
       ),
@@ -326,11 +482,19 @@ class _PluginCard extends ConsumerWidget {
     required this.plugin,
     required this.baseEnabled,
     required this.l10n,
+    this.appVersion,
+    this.updateInfo,
+    this.storeUpToDate = false,
+    this.onUpdate,
   });
 
   final InstalledPlugin plugin;
   final bool baseEnabled;
   final AppLocalizations l10n;
+  final String? appVersion;
+  final _UpdateInfo? updateInfo;
+  final bool storeUpToDate;
+  final Future<void> Function(String url)? onUpdate;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -343,6 +507,7 @@ class _PluginCard extends ConsumerWidget {
       plugin.isOfficialStoreSource
           ? l10n.t('pluginOfficial')
           : l10n.t('pluginUnofficial'),
+      if (updateInfo != null) 'Обновление: v${updateInfo!.availableVersion}',
     ];
 
     return Card(
@@ -427,6 +592,9 @@ class _PluginCard extends ConsumerWidget {
     );
   }
 
+  // ignore: unused_element (kept for potential future localized state checks)
+  bool _storeLoadedSafe(BuildContext context) => true;
+
   void _showDetails(BuildContext context) {
     final m = plugin.manifest;
     showModalBottomSheet<void>(
@@ -448,13 +616,20 @@ class _PluginCard extends ConsumerWidget {
             _kv(context, l10n.t('pluginVersion'), m.version),
             _kv(context, l10n.t('pluginAuthor'), m.author),
             _kv(context, l10n.t('pluginApiVersion'), m.apiVersion.toString()),
+            _kv(context, 'Мин. версия приложения', m.minAppVersion ?? '—'),
             _kv(
               context,
-              l10n.t('pluginSource'),
-              plugin.isOfficialStoreSource
-                  ? l10n.t('pluginOfficial')
-                  : '${l10n.t('pluginUnofficial')} (${plugin.sourceRef})',
+              'Версия приложения',
+              (appVersion == null || appVersion!.isEmpty) ? '—' : appVersion!,
             ),
+            _kv(
+              context,
+              'Источник загрузки',
+              plugin.isOfficialStoreSource
+                  ? '${l10n.t('pluginOfficial')} (${plugin.sourceRef.isEmpty ? PluginService.officialStoreUrl : plugin.sourceRef})'
+                  : '${l10n.t('pluginUnofficial')} (${plugin.sourceRef.isEmpty ? '—' : plugin.sourceRef})',
+            ),
+            _kv(context, 'Хэш файла (.mu, SHA-256)', plugin.packageHash ?? '—'),
             if (m.permissions.isNotEmpty)
               _kv(
                 context,
@@ -467,12 +642,72 @@ class _PluginCard extends ConsumerWidget {
                 l10n.t('pluginHooks'),
                 m.hooks.map((h) => h.name).join(', '),
               ),
+            if (m.runtime != PluginRuntimeKind.none)
+              _kv(
+                context,
+                'Runtime',
+                '${m.runtime.name}${m.entry != null ? ' · ${m.entry}' : ''}',
+              ),
             if (m.importRules.isNotEmpty)
               _kv(
                 context,
                 'Import rules',
                 m.importRules.map((r) => r.label).join(', '),
               ),
+            if (m.engine.isNotEmpty)
+              _kv(context, 'Engine', m.engine.toString()),
+            if (m.ui.isNotEmpty) _kv(context, 'UI', m.ui.toString()),
+            if (updateInfo != null) ...[
+              const SizedBox(height: 8),
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Доступно обновление: v${updateInfo!.availableVersion} (установлена v${m.version})',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onPrimaryContainer,
+                        ),
+                      ),
+                      if (updateInfo!.description.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Что нового: ${updateInfo!.description}',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onPrimaryContainer,
+                              ),
+                        ),
+                      ],
+                      if (onUpdate != null) ...[
+                        const SizedBox(height: 8),
+                        FilledButton.icon(
+                          onPressed: () async {
+                            Navigator.of(sheetContext).pop();
+                            await onUpdate!(updateInfo!.downloadUrl);
+                          },
+                          icon: const Icon(Icons.system_update_alt),
+                          label: const Text('Обновить'),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ] else if (storeUpToDate) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Обновлений нет (актуальная версия в каталоге).',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
             if (m.id == PluginService.basePluginId) ...[
               const SizedBox(height: 12),
               Text(
@@ -593,6 +828,18 @@ class _StoreEntry {
       id: (map['id'] as String?)?.trim(),
     );
   }
+}
+
+class _UpdateInfo {
+  const _UpdateInfo({
+    required this.availableVersion,
+    required this.description,
+    required this.downloadUrl,
+  });
+
+  final String availableVersion;
+  final String description;
+  final String downloadUrl;
 }
 
 class _StoreSheetState extends State<_StoreSheet> {

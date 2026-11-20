@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:mouvi/core/plugins/plugin_models.dart';
@@ -186,6 +187,7 @@ class PluginService {
     await _extractArchive(archive, installDir);
 
     final prev = replaced ? plugins[existingIndex] : null;
+    final packageHash = sha256.convert(bytes).toString();
     final installed = InstalledPlugin(
       manifest: manifest,
       installPath: installDir.path,
@@ -196,6 +198,7 @@ class PluginService {
       riskAccepted:
           prev?.riskAccepted == true ||
           _isOfficialSource(sourceKind, sourceRef),
+      packageHash: packageHash,
     );
 
     if (replaced) {

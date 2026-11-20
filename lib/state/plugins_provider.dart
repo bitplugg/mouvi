@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/plugins/plugin_models.dart';
+import 'package:mouvi/core/plugins/plugin_runtime.dart';
 import 'package:mouvi/core/services/plugin_service.dart';
 
 class PluginsNotifier extends Notifier<AsyncValue<List<InstalledPlugin>>> {
@@ -25,6 +26,9 @@ class PluginsNotifier extends Notifier<AsyncValue<List<InstalledPlugin>>> {
   Future<PluginInstallResult> installFromFile(String path) async {
     final service = ref.read(pluginServiceProvider);
     final result = await service.installFromFile(filePath: path);
+    await ref
+        .read(pluginRuntimeServiceProvider)
+        .resetForPlugin(result.plugin.manifest.id);
     await _load();
     return result;
   }
@@ -32,6 +36,9 @@ class PluginsNotifier extends Notifier<AsyncValue<List<InstalledPlugin>>> {
   Future<PluginInstallResult> installFromUrl(String url) async {
     final service = ref.read(pluginServiceProvider);
     final result = await service.installFromUrl(url);
+    await ref
+        .read(pluginRuntimeServiceProvider)
+        .resetForPlugin(result.plugin.manifest.id);
     await _load();
     return result;
   }
@@ -48,6 +55,7 @@ class PluginsNotifier extends Notifier<AsyncValue<List<InstalledPlugin>>> {
 
   Future<void> remove(String id) async {
     await ref.read(pluginServiceProvider).remove(id);
+    await ref.read(pluginRuntimeServiceProvider).resetForPlugin(id);
     await _load();
   }
 }

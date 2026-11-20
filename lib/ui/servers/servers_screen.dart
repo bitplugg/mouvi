@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
+import 'package:mouvi/core/plugins/plugin_models.dart';
 import 'package:mouvi/core/plugins/plugin_registry.dart';
 import 'package:mouvi/core/services/config_export_service.dart';
 import 'package:mouvi/core/utils/config_parser.dart';
@@ -579,32 +580,59 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     String? name,
     bool showResult = true,
   }) async {
-    final validation = validateConfig(content);
-    final pluginMatch = validation.isValid
-        ? null
-        : ref.read(pluginRegistryProvider).matchImport(content);
+    var effectiveContent = content;
+    final validation = validateConfig(effectiveContent);
+    PluginImportMatch? pluginMatch;
+    if (!validation.isValid) {
+      pluginMatch = await ref
+          .read(pluginRegistryProvider)
+          .matchImport(effectiveContent);
+      if (pluginMatch != null &&
+          pluginMatch.content != null &&
+          pluginMatch.content!.trim().isNotEmpty) {
+        effectiveContent = pluginMatch.content!.trim();
+      }
+    }
 
-    if (!validation.isValid && pluginMatch == null) {
+    final effectiveValidation = validateConfig(effectiveContent);
+    if (!effectiveValidation.isValid && pluginMatch == null) {
       if (context.mounted && showResult) {
-        _showImportError(context, localizations, validation.errors);
+        _showImportError(context, localizations, effectiveValidation.errors);
       }
       return false;
     }
 
-    final effectiveProtocol = validation.isValid
-        ? validation.protocol
+    VpnProtocolType effectiveProtocol = effectiveValidation.isValid
+        ? effectiveValidation.protocol
         : VpnProtocolType.unknown;
-    final suggestedName = name != null && name.trim().isNotEmpty
+    if (!effectiveValidation.isValid &&
+        pluginMatch != null &&
+        pluginMatch.protocol != null) {
+      final hinted = pluginMatch.protocol!.toLowerCase().trim();
+      for (final p in VpnProtocolType.values) {
+        if (p.name == hinted) {
+          effectiveProtocol = p;
+          break;
+        }
+      }
+    }
+
+    final suggestedName = (name != null && name.trim().isNotEmpty)
         ? name.trim()
-        : suggestConfigName(content, fallback: 'Server');
+        : (pluginMatch?.name != null && pluginMatch!.name!.trim().isNotEmpty
+              ? pluginMatch.name!.trim()
+              : suggestConfigName(effectiveContent, fallback: 'Server'));
 
     final config = VpnConfig(
       id: '${DateTime.now().microsecondsSinceEpoch}',
-      name: pluginMatch != null && name == null
+      name:
+          pluginMatch != null &&
+              name == null &&
+              (pluginMatch.name == null || pluginMatch.name!.trim().isEmpty)
           ? '$suggestedName (${pluginMatch.label})'
           : suggestedName,
       protocol: effectiveProtocol,
-      content: content,
+      content: effectiveContent,
       createdAt: DateTime.now(),
     );
     final notifier = ref.read(savedConfigsProvider.notifier);
@@ -616,11 +644,14 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     String message;
     if (notifier.lastWriteFailed) {
       message = localizations.t('storageWriteFailed');
-    } else if (pluginMatch != null) {
+    } else if (pluginMatch != null && !effectiveValidation.isValid) {
       message =
           '${localizations.t('configImportedByPlugin')}: ${pluginMatch.pluginName} · ${pluginMatch.label}';
-    } else if (validation.engineSupported) {
-      final details = validation.warnings
+    } else if (pluginMatch != null && effectiveValidation.isValid) {
+      message =
+          '${localizations.t('configImportedByPlugin')}: ${pluginMatch.pluginName} · ${pluginMatch.label}';
+    } else if (effectiveValidation.engineSupported) {
+      final details = effectiveValidation.warnings
           .toSet()
           .map(localizations.t)
           .join('\n');
