@@ -11,6 +11,7 @@ import 'package:mouvi/state/theme_provider.dart';
 import 'package:mouvi/state/update_provider.dart';
 import 'package:mouvi/state/vpn_settings_provider.dart';
 import 'package:mouvi/ui/settings/diagnostics_screen.dart';
+import 'package:mouvi/ui/settings/plugins_screen.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -421,6 +422,27 @@ class SettingsScreen extends ConsumerWidget {
                   title: Text(localizations.t('storageEncrypted')),
                 ),
               ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            localizations.t('plugins'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.extension_outlined),
+              title: Text(localizations.t('plugins')),
+              subtitle: Text(localizations.t('pluginsHint')),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const PluginsScreen(),
+                  ),
+                );
+              },
             ),
           ),
           const SizedBox(height: 24),

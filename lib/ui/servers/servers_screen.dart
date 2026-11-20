@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mouvi/core/localization/app_localizations.dart';
 import 'package:mouvi/core/models/vpn_config.dart';
+import 'package:mouvi/core/plugins/plugin_registry.dart';
 import 'package:mouvi/core/services/config_export_service.dart';
 import 'package:mouvi/core/utils/config_parser.dart';
 import 'package:mouvi/core/utils/format_utils.dart';
@@ -579,18 +580,30 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     bool showResult = true,
   }) async {
     final validation = validateConfig(content);
-    if (!validation.isValid) {
+    final pluginMatch = validation.isValid
+        ? null
+        : ref.read(pluginRegistryProvider).matchImport(content);
+
+    if (!validation.isValid && pluginMatch == null) {
       if (context.mounted && showResult) {
         _showImportError(context, localizations, validation.errors);
       }
       return false;
     }
+
+    final effectiveProtocol = validation.isValid
+        ? validation.protocol
+        : VpnProtocolType.unknown;
+    final suggestedName = name != null && name.trim().isNotEmpty
+        ? name.trim()
+        : suggestConfigName(content, fallback: 'Server');
+
     final config = VpnConfig(
       id: '${DateTime.now().microsecondsSinceEpoch}',
-      name: name != null && name.trim().isNotEmpty
-          ? name.trim()
-          : suggestConfigName(content, fallback: 'Server'),
-      protocol: validation.protocol,
+      name: pluginMatch != null && name == null
+          ? '$suggestedName (${pluginMatch.label})'
+          : suggestedName,
+      protocol: effectiveProtocol,
       content: content,
       createdAt: DateTime.now(),
     );
@@ -599,17 +612,25 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
     if (!context.mounted || !showResult) {
       return true;
     }
-    final messageKey = notifier.lastWriteFailed
-        ? 'storageWriteFailed'
-        : (validation.engineSupported
-              ? 'configAdded'
-              : 'configImportedUnsupported');
-    final details = validation.engineSupported
-        ? validation.warnings.toSet().map(localizations.t).join('\n')
-        : '';
-    final message = details.isEmpty
-        ? localizations.t(messageKey)
-        : '${localizations.t(messageKey)}\n$details';
+
+    String message;
+    if (notifier.lastWriteFailed) {
+      message = localizations.t('storageWriteFailed');
+    } else if (pluginMatch != null) {
+      message =
+          '${localizations.t('configImportedByPlugin')}: ${pluginMatch.pluginName} · ${pluginMatch.label}';
+    } else if (validation.engineSupported) {
+      final details = validation.warnings
+          .toSet()
+          .map(localizations.t)
+          .join('\n');
+      message = details.isEmpty
+          ? localizations.t('configAdded')
+          : '${localizations.t('configAdded')}\n$details';
+    } else {
+      message = localizations.t('configImportedUnsupported');
+    }
+
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
     return true;
