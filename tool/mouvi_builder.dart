@@ -126,10 +126,10 @@ Future<void> _build(List<String> args) async {
     final normalized = rel.replaceAll('\\', '/');
     if (normalized.isEmpty || normalized.startsWith('.git/')) continue;
     // Keep manifest.json at root; include everything else as-is.
-    encoder.addFile(entity, normalized);
+    await encoder.addFile(entity, normalized);
     count++;
   }
-  encoder.close();
+  await encoder.close();
 
   print('OK: built $outPath');
   print('  id: $id');
