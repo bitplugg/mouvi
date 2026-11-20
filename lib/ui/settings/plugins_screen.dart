@@ -599,7 +599,7 @@ class _StoreSheetState extends State<_StoreSheet> {
   late Future<List<_StoreEntry>> _future;
 
   static const String _indexUrl =
-      'https://raw.githubusercontent.com/bitplugg/mouvi-store/main/index.json';
+      'https://raw.githubusercontent.com/bitplugg/mouvi-store/master/index.json';
 
   @override
   void initState() {

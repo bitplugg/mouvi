@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Mouvi plugin builder wrapper.
+# Usage: ./mouvi-builder <command> [options]
+# Requires: Dart SDK (https://dart.dev/get-dart) and project dependencies fetched (`dart pub get` or `flutter pub get`).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+if command -v dart >/dev/null 2>&1; then
+  exec dart run tool/mouvi_builder.dart "$@"
+elif command -v flutter >/dev/null 2>&1; then
+  exec flutter pub run tool/mouvi_builder.dart "$@"
+else
+  echo "Error: Dart SDK not found. Install Dart or Flutter and ensure 'dart' is on PATH." >&2
+  exit 127
+fi
